@@ -11,6 +11,7 @@ from django.http import JsonResponse
 
 class LoginView(APIView):
     def post(self, request):
+        print("Received request data:", request.data)
         username = request.data.get("username")
         password = request.data.get("password")
         
