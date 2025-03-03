@@ -6,12 +6,8 @@ from django.contrib.auth import authenticate
 
 from .models import Usuario, Producto, EntradaInventario, Venta, SalidaInventario
 from .serializers import UsuarioSerializer, ProductoSerializer, EntradaInventarioSerializer, VentaSerializer, SalidaInventarioSerializer
-from django.middleware.csrf import get_token
 from django.http import JsonResponse
 
-def get_csrf(request):
-    
-    return JsonResponse({"csrftoken": get_token(request)})
 
 class LoginView(APIView):
     def post(self, request):

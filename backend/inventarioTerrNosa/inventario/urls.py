@@ -16,6 +16,5 @@ router.register(r'admin/salidas', SalidaInventarioAdminViewSet, basename='admin-
 # Include router-generated URLs
 urlpatterns = [
     path('api/', include(router.urls)), # Main API endpoint
-    path('api/login/', LoginView.as_view(), name="api-login"),
-    path('api/csrf/', get_csrf, name='csrf-token'),
+    path('api/login', LoginView.as_view(), name="api-login"),
 ]
