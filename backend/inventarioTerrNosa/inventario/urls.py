@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import EntradaInventarioViewSet, UsuarioViewSet, ProductoViewSet, VentaViewSet, SalidaInventarioViewSet, VentaAdminViewSet, SalidaInventarioAdminViewSet, LoginView
+from .views import EntradaInventarioViewSet, UsuarioViewSet, ProductoViewSet, VentaViewSet, SalidaInventarioViewSet, VentaAdminViewSet, SalidaInventarioAdminViewSet, LoginView, get_csrf
 
 # Create a router and register viewsets
 router = DefaultRouter()
@@ -17,4 +17,5 @@ router.register(r'admin/salidas', SalidaInventarioAdminViewSet, basename='admin-
 urlpatterns = [
     path('api/', include(router.urls)), # Main API endpoint
     path('api/login/', LoginView.as_view(), name="api-login"),
+    path('api/csrf/', get_csrf, name='csrf-token'),
 ]
