@@ -8,7 +8,6 @@ from .models import Usuario, Producto, EntradaInventario, Venta, SalidaInventari
 from .serializers import UsuarioSerializer, ProductoSerializer, EntradaInventarioSerializer, VentaSerializer, SalidaInventarioSerializer
 from django.http import JsonResponse
 
-
 class LoginView(APIView):
     def post(self, request):
         print("Received request data:", request.data)
@@ -72,6 +71,14 @@ class VentaViewSet(viewsets.ModelViewSet):
     queryset = Venta.objects.all().filter(is_deleted=False)
     serializer_class = VentaSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def create(self, request, *args, **kwargs):
+        """ Create a venta and return its ID """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        venta = serializer.save()  # Save the venta instance
+
+        return Response({"id": venta.id}, status=status.HTTP_201_CREATED)
     
     def destroy(self, request, *args, **kwargs):
         """ Soft delete instead of actual deletion """
