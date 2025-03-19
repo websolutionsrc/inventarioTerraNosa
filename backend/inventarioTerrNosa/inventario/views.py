@@ -19,7 +19,7 @@ class LoginView(APIView):
 
         if user:
             token, created = Token.objects.get_or_create(user=user)
-            return Response({"token": token.key}, status=status.HTTP_200_OK)
+            return Response({"token": token.key, "is_staff": user.is_staff}, status=status.HTTP_200_OK)
 
         print("Invalid username or password")  # Debugging output
         return Response({"error": "Invalid username or password"}, status=status.HTTP_400_BAD_REQUEST)
