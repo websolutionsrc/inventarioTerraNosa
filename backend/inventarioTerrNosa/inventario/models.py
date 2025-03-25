@@ -50,10 +50,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
 class Producto(models.Model):
     nombre = models.CharField(max_length=255)
-    tipo = models.CharField(max_length=255)
-    proveedor = models.CharField(max_length=255)
-    precio = models.DecimalField(max_digits=10, decimal_places=2)
-    stock = models.IntegerField()  # Initial stock
+    tipo = models.CharField(max_length=255, blank=True, null=True) 
+    proveedor = models.CharField(max_length=255, blank=True, null=True) 
+    precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True) 
+    stock = models.IntegerField() 
 
     def __str__(self):
         return f"{self.nombre} - Stock: {self.stock}"
