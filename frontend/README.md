@@ -28,8 +28,8 @@ un `config.ini` junto al programa (ver `config.ini.ejemplo`).
 
 | Pantalla | Quién | Qué hace |
 |---|---|---|
-| **Vender** (F1) | Todos | Buscador y lista de productos con stock. Carrito con − y +, método de pago y canal, total y **Cobrar** (F12), con confirmación. Tasas **BCV**, **BDV** y **USDT** (Binance P2P) arriba y total en Bs a tasa BCV |
-| **Ventas de hoy** (F2) | Todos | Total del día (también en Bs a tasa BCV), número de ventas y totales por método de pago. Detalle de cada venta, **Anular venta** (motivo obligatorio; el stock vuelve) y **Corregir** (anula y carga los productos en Vender) |
+| **Vender** (F1) | Todos | Buscador y lista de productos con stock. Carrito con − y +, método de pago y canal, total y **Cobrar** (F12), con confirmación. Tasas **BCV** y **USDT** (Binance P2P) arriba. Con métodos en bolívares: **tasa editable** (viene la del BCV, se puede subir) y **total en Bs**, que se guardan en la venta |
+| **Ventas de hoy** (F2) | Todos | Total del día y lo cobrado en Bs, número de ventas y totales por método de pago (con Bs). Detalle de cada venta, **Anular venta** (motivo obligatorio; el stock vuelve) y **Corregir** (anula y carga los productos en Vender) |
 | **Inventario** (F3) | Admin | Productos con stock bajo resaltado. Nuevo, editar, **entrada de mercancía**, **ajustar stock** (con motivo), ver entradas y ajustes, desactivar y reactivar |
 | **Historial** (F4) | Admin | Ventas por fechas y filtros, **anuladas en rojo** con quién, cuándo y por qué. Totales y **exportación a CSV para Excel** |
 | **Usuarios** (F5) | Admin | Crear, cambiar contraseña o rol, desactivar |

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
@@ -87,11 +89,16 @@ class VentaSerializer(serializers.ModelSerializer):
     metodo_pago_nombre = serializers.CharField(source='get_metodo_pago_display', read_only=True)
     canal_nombre = serializers.CharField(source='get_canal_display', read_only=True)
     anulada_por = serializers.CharField(source='anulada_por.username', read_only=True, default=None)
+    moneda = serializers.SerializerMethodField()
 
     class Meta:
         model = Venta
-        fields = ['id', 'fecha', 'usuario', 'metodo_pago', 'metodo_pago_nombre', 'canal', 'canal_nombre',
-                  'total', 'lineas', 'anulada', 'anulada_por', 'anulada_en', 'motivo_anulacion']
+        fields = ['id', 'fecha', 'usuario', 'metodo_pago', 'metodo_pago_nombre', 'moneda', 'canal', 'canal_nombre',
+                  'total', 'tasa_cambio', 'tasa_bcv', 'total_bs', 'lineas', 'anulada', 'anulada_por', 'anulada_en',
+                  'motivo_anulacion']
+
+    def get_moneda(self, obj):
+        return Venta.moneda_de(obj.metodo_pago)
 
     CAMPOS_ANULACION = ('anulada', 'anulada_por', 'anulada_en', 'motivo_anulacion')
 
@@ -113,6 +120,9 @@ class NuevaVentaSerializer(serializers.Serializer):
     lineas = NuevaLineaSerializer(many=True, allow_empty=False)
     metodo_pago = serializers.ChoiceField(choices=Venta.MetodoPago.choices)
     canal = serializers.ChoiceField(choices=Venta.Canal.choices, default=Venta.Canal.TIENDA)
+    # Bs por dólar para cobros en bolívares; si no viene se usa la del BCV
+    tasa = serializers.DecimalField(max_digits=16, decimal_places=4, required=False, allow_null=True,
+                                    min_value=Decimal('0.0001'))
 
 
 class AnularVentaSerializer(serializers.Serializer):

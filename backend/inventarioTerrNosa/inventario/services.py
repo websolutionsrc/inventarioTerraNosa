@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from .models import EntradaInventario, Producto, SalidaInventario, Venta
+from .models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Venta
 
 
 class ErrorNegocio(Exception):
@@ -29,14 +29,33 @@ def es_de_hoy(venta):
     return inicio <= venta.fecha < fin
 
 
+def ultima_tasa_bcv():
+    """Última tasa del BCV guardada (sin consultar la web: no debe frenar una venta)."""
+    tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).order_by('-obtenida_en').first()
+    return tasa.venta if tasa else None
+
+
 @transaction.atomic
-def registrar_venta(usuario, lineas, metodo_pago, canal):
+def registrar_venta(usuario, lineas, metodo_pago, canal, tasa=None):
     """
     lineas: lista de {"producto": id, "cantidad": n}. El precio lo pone el servidor.
     Si un producto aparece varias veces se suman las cantidades.
+    tasa: Bs por dólar a la que se cobra, solo en métodos en bolívares. Si no viene, se usa la
+    del BCV. Se guarda en la venta junto a la del BCV para saber a cuánto se vendió.
     """
     if not lineas:
         raise ErrorNegocio("La venta no tiene productos.")
+
+    en_bolivares = Venta.moneda_de(metodo_pago) == 'VES'
+    tasa_bcv = ultima_tasa_bcv() if en_bolivares else None
+    if en_bolivares:
+        tasa = Decimal(tasa) if tasa is not None else tasa_bcv
+        if tasa is None:
+            raise ErrorNegocio("No hay tasa de cambio para cobrar en bolívares. Indica la tasa.")
+        if tasa <= 0:
+            raise ErrorNegocio("La tasa de cambio debe ser mayor que cero.")
+    else:
+        tasa = None
 
     cantidades = OrderedDict()
     for linea in lineas:
@@ -73,7 +92,13 @@ def registrar_venta(usuario, lineas, metodo_pago, canal):
         total += producto.precio * cantidad
 
     venta.total = total
-    venta.save(update_fields=['total'])
+    campos = ['total']
+    if en_bolivares:
+        venta.tasa_cambio = tasa
+        venta.tasa_bcv = tasa_bcv
+        venta.total_bs = (total * tasa).quantize(Decimal('0.01'))
+        campos += ['tasa_cambio', 'tasa_bcv', 'total_bs']
+    venta.save(update_fields=campos)
     return venta
 
 

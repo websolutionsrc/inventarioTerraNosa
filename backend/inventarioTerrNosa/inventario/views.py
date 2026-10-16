@@ -85,7 +85,8 @@ class ConfigView(APIView):
             'zona_horaria': settings.TIME_ZONE,
             'hoy': timezone.localdate().isoformat(),
             'moneda': 'USD',
-            'metodos_pago': [{'id': k, 'nombre': v} for k, v in Venta.MetodoPago.choices],
+            'metodos_pago': [{'id': k, 'nombre': v, 'moneda': Venta.moneda_de(k)}
+                             for k, v in Venta.MetodoPago.choices],
             'canales': [{'id': k, 'nombre': v} for k, v in Venta.Canal.choices],
         })
 
@@ -261,10 +262,12 @@ class VentaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
         activas = qs.filter(anulada=False)
 
         def agrupar(campo, opciones):
-            filas = activas.values(campo).annotate(ventas=Count('id'), total=Sum('total')).order_by(campo)
+            filas = (activas.values(campo).annotate(ventas=Count('id'), total=Sum('total'), total_bs=Sum('total_bs'))
+                     .order_by(campo))
             nombres = dict(opciones)
-            return [{'id': f[campo], 'nombre': nombres.get(f[campo], f[campo]),
-                     'ventas': f['ventas'], 'total': importe(f['total'])} for f in filas]
+            return [{'id': f[campo], 'nombre': nombres.get(f[campo], f[campo]), 'ventas': f['ventas'],
+                     'total': importe(f['total']),
+                     'total_bs': importe(f['total_bs']) if f['total_bs'] is not None else None} for f in filas]
 
         inicio, fin = self._rango()
         datos = {
@@ -272,6 +275,7 @@ class VentaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
             'hasta': (timezone.localtime(fin) - timedelta(days=1)).date().isoformat(),
             'ventas': activas.count(),
             'total': importe(activas.aggregate(t=Sum('total'))['t']),
+            'total_bs': importe(activas.aggregate(t=Sum('total_bs'))['t']),  # lo cobrado en bolívares
             'por_metodo_pago': agrupar('metodo_pago', Venta.MetodoPago.choices),
             'por_canal': agrupar('canal', Venta.Canal.choices),
         }

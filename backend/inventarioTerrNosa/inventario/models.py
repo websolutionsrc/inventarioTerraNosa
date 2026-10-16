@@ -109,6 +109,10 @@ class Venta(models.Model):
         BINANCE = 'binance', 'Binance (USDT)'
         OTRO = 'otro', 'Otro'
 
+    # Métodos que se cobran en bolívares: la venta guarda la tasa usada y el total en Bs
+    METODOS_EN_BOLIVARES = {MetodoPago.EFECTIVO_BS, MetodoPago.PAGO_MOVIL, MetodoPago.PUNTO,
+                            MetodoPago.TRANSFERENCIA}
+
     class Canal(models.TextChoices):
         TIENDA = 'tienda', 'Tienda'
         MARKETPLACE = 'marketplace', 'Marketplace'
@@ -120,6 +124,19 @@ class Venta(models.Model):
     metodo_pago = models.CharField(max_length=20, choices=MetodoPago.choices, default=MetodoPago.EFECTIVO_USD)
     canal = models.CharField(max_length=20, choices=Canal.choices, default=Canal.TIENDA)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))  # USD
+
+    # Solo en ventas cobradas en bolívares (null en las demás y en las anteriores a esta versión)
+    tasa_cambio = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)  # Bs/$ cobrada
+    tasa_bcv = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)  # BCV de ese momento
+    total_bs = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+
+    @classmethod
+    def moneda_de(cls, metodo):
+        if metodo in cls.METODOS_EN_BOLIVARES:
+            return 'VES'
+        if metodo == cls.MetodoPago.BINANCE:
+            return 'USDT'
+        return 'USD'
 
     # Anulación: la venta sigue en la base de datos; el encargado deja de verla y el admin
     # la ve marcada con quién, cuándo y por qué.
@@ -141,7 +158,6 @@ class TasaCambio(models.Model):
 
     class Fuente(models.TextChoices):
         BCV = 'bcv', 'BCV (oficial)'
-        BDV = 'bdv', 'Banco de Venezuela'
         BINANCE = 'binance', 'Binance P2P (USDT)'
 
     fuente = models.CharField(max_length=10, choices=Fuente.choices)

@@ -8,7 +8,6 @@ from ..widgets import Columna, Tabla, TarjetaCifra, boton
 from .base import Pagina
 from .detalle_venta import DetalleVenta
 from .dialogos import DialogoAnular
-from .tasas import en_bolivares
 
 
 class PaginaVentasHoy(Pagina):
@@ -17,8 +16,6 @@ class PaginaVentasHoy(Pagina):
 
     def __init__(self, ventana):
         super(PaginaVentasHoy, self).__init__(ventana)
-        self._total_dia = 0
-        ventana.tasas_cambiadas.connect(self._pintar_total_bs)
         refrescar = self.cabecera.agregar(boton('Actualizar', 'refrescar'))
         refrescar.clicked.connect(self.cargar)
 
@@ -75,16 +72,16 @@ class PaginaVentasHoy(Pagina):
         ventas, resumen, _ = datos
         self.tabla.poner_filas(ventas)
         self._seleccion()
-        self._total_dia = resumen['total']
-        self._pintar_total_bs()
+        bs = formato.decimal(resumen.get('total_bs'))
+        self.cifra_total.poner(formato.dinero(resumen['total']),
+                               'Cobrado en Bs: {}'.format(formato.bolivares(bs)) if bs else 'Sin contar las anuladas')
         self.cifra_ventas.poner(str(resumen['ventas']), '{} producto{} vendido{}'.format(
             *self._unidades(ventas)))
-        metodos = ['{}: {}'.format(m['nombre'], formato.dinero(m['total'])) for m in resumen['por_metodo_pago']]
+        metodos = ['{}: {}{}'.format(m['nombre'], formato.dinero(m['total']),
+                                     ' ({})'.format(formato.bolivares(m['total_bs'])) if m.get('total_bs') else '')
+                   for m in resumen['por_metodo_pago']]
+        metodos = [m.replace(' ', ' ') for m in metodos]  # cada método se corta entero, no a la mitad
         self.cifra_metodos.poner('    '.join(metodos) or 'Sin ventas todavía', '')
-
-    def _pintar_total_bs(self, *args):
-        bs = en_bolivares(self._total_dia, self.ventana.tasas)
-        self.cifra_total.poner(formato.dinero(self._total_dia), bs or 'Sin contar las anuladas')
 
     @staticmethod
     def _unidades(ventas):

@@ -207,13 +207,18 @@ class PaginaHistorial(Pagina):
             with open(ruta, 'w', newline='', encoding='utf-8-sig') as archivo:
                 w = csv.writer(archivo, delimiter=';')
                 w.writerow(['Fecha', 'Hora', 'Venta', 'Vendedor', 'Método de pago', 'Canal', 'Producto', 'Cantidad',
-                            'Precio', 'Subtotal', 'Total venta', 'Estado', 'Anulada por', 'Motivo anulación'])
+                            'Precio', 'Subtotal', 'Total venta', 'Tasa Bs/$', 'Tasa BCV', 'Total Bs', 'Estado',
+                            'Anulada por', 'Motivo anulación'])
                 for v in sorted(self.ventas, key=lambda v: v['fecha']):
                     for l in v['lineas']:
                         w.writerow([formato.fecha_corta(v['fecha']), formato.hora(v['fecha']), v['id'], v['usuario'],
                                     v['metodo_pago_nombre'], v['canal_nombre'], l['producto_nombre'], l['cantidad'],
                                     formato.numero(l['precio_unitario']), formato.numero(l['subtotal']),
-                                    formato.numero(v['total']), 'Anulada' if v['anulada'] else 'Activa',
+                                    formato.numero(v['total']),
+                                    formato.numero(v['tasa_cambio']) if v.get('tasa_cambio') else '',
+                                    formato.numero(v['tasa_bcv']) if v.get('tasa_bcv') else '',
+                                    formato.numero(v['total_bs']) if v.get('total_bs') else '',
+                                    'Anulada' if v['anulada'] else 'Activa',
                                     v['anulada_por'] or '', v['motivo_anulacion']])
         except OSError as e:
             mostrar_error(self, e, 'No se pudo guardar el archivo')

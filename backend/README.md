@@ -37,11 +37,12 @@ cd inventarioTerrNosa
   anuló, cuándo y por qué.
 - "Hoy" es el día en Venezuela (`America/Caracas`).
 - Los **productos** no se borran: se desactivan y conservan su historial.
-- Los precios están en **USD**. Las tasas Bs/USD solo se muestran como referencia:
+- Los precios están en **USD**. Los métodos **en bolívares** (efectivo Bs, pago móvil, punto de venta y
+  transferencia) guardan en la venta la **tasa cobrada**, la **tasa BCV** de ese momento y el **total en Bs**.
+  La tasa cobrada puede subirse (recargo) desde la app. El resumen del día suma lo cobrado en Bs por método.
+- Tasas Bs/USD de referencia:
   - **BCV:** se lee de bcv.org.ve. Su web no envía el certificado intermedio de Sectigo, que va
     incluido en `inventario/certificados/` para poder verificar HTTPS.
-  - **Banco de Venezuela:** se lee de dolarhoy.net, porque el banco no la publica en su web. Es
-    una referencia **no oficial**.
   - **Binance P2P (USDT):** mediana de los 10 primeros anuncios de compra y de venta de USDT/VES,
     con la búsqueda pública que usa la web de Binance P2P. Referencia de mercado **no oficial**.
   - Cada tasa se consulta como mucho cada 30 minutos y se guarda la última buena (`TasaCambio`).
@@ -54,7 +55,7 @@ cd inventarioTerrNosa
 | `POST logout/` | Autenticado | Invalida el token |
 | `GET yo/` | Autenticado | Datos del usuario conectado |
 | `GET config/` | Autenticado | Métodos de pago, canales, fecha de hoy y versión |
-| `GET tasas/` | Autenticado | Tasas Bs/USD: BCV (oficial), Banco de Venezuela y USDT en Binance P2P (no oficiales). Admin: `?actualizar=1` |
+| `GET tasas/` | Autenticado | Tasas Bs/USD: BCV (oficial) y USDT en Binance P2P (no oficial). Admin: `?actualizar=1` |
 | `GET productos/` | Autenticado | Productos activos (admin: `?incluir_inactivos=1`) |
 | `POST/PUT/PATCH productos/` | Admin | Crear (con `stock_inicial`) o editar. El stock no se edita aquí |
 | `DELETE productos/{id}/` | Admin | Desactiva el producto |
@@ -62,7 +63,7 @@ cd inventarioTerrNosa
 | `POST productos/{id}/mover_stock/` | Admin | `{tipo: entrada\|ajuste, cantidad, motivo}` |
 | `GET movimientos/` | Admin | Registro de entradas y ajustes (`?producto=`, `?desde=`, `?hasta=`) |
 | `GET ventas/` | Autenticado | Encargado: las de hoy. Admin: `?fecha=` o `?desde=&hasta=`, `?estado=activas\|anuladas\|todas`, `?usuario=`, `?metodo_pago=`, `?canal=` |
-| `POST ventas/` | Autenticado | `{lineas: [{producto, cantidad}], metodo_pago, canal}` |
+| `POST ventas/` | Autenticado | `{lineas: [{producto, cantidad}], metodo_pago, canal, tasa?}`. `tasa` (Bs/$) solo cuenta en métodos en bolívares; si no viene, se usa la del BCV |
 | `POST ventas/{id}/anular/` | Autenticado | `{motivo}`: anula y devuelve el stock |
 | `GET ventas/resumen/` | Autenticado | Totales del día (o del periodo, si es admin) por método de pago y por canal |
 | `GET/POST/PATCH usuarios/` | Admin | Gestión de usuarios. No se borran: se desactivan |
@@ -77,6 +78,6 @@ cd inventarioTerrNosa
    en anuladas.
 4. `python manage.py collectstatic`, solo si se usa el panel `/admin/`.
 5. `python manage.py createsuperuser` para crear el primer admin.
-6. El servidor tiene que poder conectarse a `www.bcv.org.ve`, `dolarhoy.net` y `p2p.binance.com` para las tasas. En
+6. El servidor tiene que poder conectarse a `www.bcv.org.ve` y `p2p.binance.com` para las tasas. En
    PythonAnywhere, la cuenta gratuita solo permite una lista de sitios autorizados: hace falta el
    plan de pago.

@@ -3,8 +3,6 @@ Tasas de cambio de referencia (bolívares por dólar).
 
 - BCV: tasa oficial publicada en www.bcv.org.ve. Su web no envía el certificado intermedio
   de Sectigo, así que se incluye en certificados/ para poder verificar HTTPS igualmente.
-- BDV: el Banco de Venezuela no publica su tasa en su web. Se toma la de dolarhoy.net, que
-  la recoge de los canales del banco: es una referencia NO oficial.
 - Binance: precio del USDT en Binance P2P (Bs por USDT). Es la mediana de los primeros
   anuncios de compra y de venta, usando la misma búsqueda pública que la web de Binance P2P.
   Es una referencia de mercado, NO oficial.
@@ -20,7 +18,6 @@ import statistics
 import urllib.request
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-from html import unescape
 from pathlib import Path
 
 from django.utils import timezone
@@ -33,7 +30,6 @@ NAVEGADOR = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TerraNosa/2.0'
 CERTIFICADO_SECTIGO = Path(__file__).resolve().parent / 'certificados' / 'sectigo-dv-r36.pem'
 
 URL_BCV = 'https://www.bcv.org.ve/'
-URL_BDV = 'https://dolarhoy.net/venezuela/spread-bancos/bdv/'
 URL_BINANCE = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
 URL_BINANCE_WEB = 'https://p2p.binance.com/es/trade/all-payments/USDT?fiat=VES'
 ANUNCIOS_BINANCE = 10
@@ -80,18 +76,6 @@ def leer_bcv(html):
     return tasa, fecha
 
 
-def _texto(html):
-    return re.sub(r'\s+', ' ', unescape(re.sub(r'<[^>]+>', ' ', html)))
-
-
-def leer_bdv(html):
-    """Devuelve (compra, venta) del Banco de Venezuela en dolarhoy.net."""
-    m = re.search(r'Compra\s*Bs\.?S?\s*([\d.,]+)\s*Venta\s*Bs\.?S?\s*([\d.,]+)', _texto(html))
-    if not m:
-        raise ErrorTasa('No se encontró la tasa del Banco de Venezuela.')
-    return _numero(m.group(1)), _numero(m.group(2))
-
-
 def leer_binance(texto_json):
     """Mediana de los precios (Bs por USDT) de una respuesta de la búsqueda de Binance P2P."""
     try:
@@ -116,9 +100,6 @@ def _actualizar(fuente):
     if fuente == TasaCambio.Fuente.BCV:
         tasa, fecha = leer_bcv(_descargar(URL_BCV))
         compra = venta = tasa
-    elif fuente == TasaCambio.Fuente.BDV:
-        compra, venta = leer_bdv(_descargar(URL_BDV))
-        fecha = timezone.localdate()
     else:
         compra, venta = _binance('BUY'), _binance('SELL')
         fecha = timezone.localdate()
@@ -148,7 +129,6 @@ def _cuatro(valor):
 def resumen(forzar=False):
     datos = {}
     for fuente, url, oficial in ((TasaCambio.Fuente.BCV, URL_BCV, True),
-                                 (TasaCambio.Fuente.BDV, URL_BDV, False),
                                  (TasaCambio.Fuente.BINANCE, URL_BINANCE_WEB, False)):
         tasa, error = obtener(fuente, forzar)
         datos[fuente] = {

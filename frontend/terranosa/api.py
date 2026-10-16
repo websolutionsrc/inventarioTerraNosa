@@ -149,8 +149,12 @@ class Api(object):
     def resumen_ventas(self, **filtros):
         return self._pedir('GET', 'ventas/resumen/', params={k: v for k, v in filtros.items() if v})
 
-    def vender(self, lineas, metodo_pago, canal):
-        return self._pedir('POST', 'ventas/', {'lineas': lineas, 'metodo_pago': metodo_pago, 'canal': canal})
+    def vender(self, lineas, metodo_pago, canal, tasa=None):
+        """tasa: Bs/$ para cobros en bolívares (texto '950.00'); None = la del BCV en el servidor."""
+        datos = {'lineas': lineas, 'metodo_pago': metodo_pago, 'canal': canal}
+        if tasa is not None:
+            datos['tasa'] = tasa
+        return self._pedir('POST', 'ventas/', datos)
 
     def anular_venta(self, venta_id, motivo):
         return self._pedir('POST', 'ventas/{}/anular/'.format(venta_id), {'motivo': motivo})

@@ -16,7 +16,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from inventario import services
-from inventario.models import EntradaInventario, Producto, SalidaInventario, Usuario, Venta
+from inventario.models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
 
 USUARIOS = [('admin', 'admin-terranosa', True), ('encargado', 'encargado-terranosa', False)]
 
@@ -73,6 +73,11 @@ class Command(BaseCommand):
             productos.append(services.crear_producto(admin, {
                 'nombre': nombre, 'tipo': tipo, 'proveedor': proveedor,
                 'precio': Decimal(precio), 'stock_minimo': minimo}, stock))
+
+        # Las ventas en bolívares necesitan una tasa del BCV; si aún no se consultó, una de ejemplo
+        if not TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).exists():
+            TasaCambio.objects.create(fuente=TasaCambio.Fuente.BCV, fecha_valor=timezone.localdate(),
+                                      compra=Decimal('880.1159'), venta=Decimal('880.1159'))
 
         p = {i: prod.id for i, prod in enumerate(productos)}
         # Ventas de ayer (se mueven de fecha después de crearlas)

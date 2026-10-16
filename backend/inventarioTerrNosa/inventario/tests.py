@@ -49,6 +49,7 @@ class LoginTests(BaseAPI):
 
 class VentaTests(BaseAPI):
     def test_venta_descuenta_stock_y_guarda_precio(self):
+        self._tasa_bcv()
         self.como(self.encargado)
         r = self.vender([{'producto': self.morral.id, 'cantidad': 2}, {'producto': self.bolso.id, 'cantidad': 1}],
                         metodo='pago_movil', canal='marketplace')
@@ -71,6 +72,57 @@ class VentaTests(BaseAPI):
         r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='binance')
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data['metodo_pago_nombre'], 'Binance (USDT)')
+
+    def _tasa_bcv(self, valor='880.1159'):
+        from .models import TasaCambio
+        TasaCambio.objects.create(fuente='bcv', fecha_valor=timezone.localdate(), compra=Decimal(valor),
+                                  venta=Decimal(valor))
+
+    def test_venta_en_bolivares_guarda_la_tasa_bcv(self):
+        self._tasa_bcv()
+        self.como(self.encargado)
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 2}], metodo='pago_movil')  # 36 $
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['moneda'], 'VES')
+        self.assertEqual((r.data['tasa_cambio'], r.data['tasa_bcv']), ('880.1159', '880.1159'))
+        self.assertEqual(r.data['total_bs'], '31684.17')
+
+    def test_venta_en_bolivares_con_tasa_propia(self):
+        self._tasa_bcv()
+        self.como(self.encargado)
+        r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.bolso.id, 'cantidad': 1}],
+                                              'metodo_pago': 'efectivo_bs', 'tasa': '950'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual((r.data['tasa_cambio'], r.data['tasa_bcv'], r.data['total_bs']),
+                         ('950.0000', '880.1159', '17100.00'))
+        resumen = self.client.get('/api/ventas/resumen/').data
+        self.assertEqual(resumen['total_bs'], '17100.00')
+        self.assertEqual(resumen['por_metodo_pago'][0]['total_bs'], '17100.00')
+
+    def test_venta_en_dolares_no_guarda_tasa(self):
+        self._tasa_bcv()
+        self.como(self.encargado)
+        r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.bolso.id, 'cantidad': 1}],
+                                              'metodo_pago': 'zelle', 'tasa': '950'}, format='json')
+        self.assertEqual(r.data['moneda'], 'USD')
+        self.assertIsNone(r.data['tasa_cambio'])
+        self.assertIsNone(r.data['total_bs'])
+
+    def test_sin_tasa_no_se_cobra_en_bolivares(self):
+        self.como(self.encargado)
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='efectivo_bs')
+        self.assertEqual(r.status_code, 400)
+        self.bolso.refresh_from_db()
+        self.assertEqual(self.bolso.stock, 3)
+        r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.bolso.id, 'cantidad': 1}],
+                                              'metodo_pago': 'efectivo_bs', 'tasa': '0'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_config_indica_la_moneda_de_cada_metodo(self):
+        self.como(self.encargado)
+        monedas = {m['id']: m['moneda'] for m in self.client.get('/api/config/').data['metodos_pago']}
+        self.assertEqual((monedas['pago_movil'], monedas['efectivo_bs'], monedas['efectivo_usd'], monedas['binance']),
+                         ('VES', 'VES', 'USD', 'USDT'))
 
     def test_el_cliente_no_puede_poner_el_precio(self):
         self.como(self.encargado)
@@ -258,9 +310,6 @@ HTML_BCV = '''<div id="dolar" class="col-sm-12"><div class="field-content"><span
 <div class="pull-right dinpro">Fecha Valor: <span class="date-display-single"
 content="2026-10-16T00:00:00-04:00">Viernes, 16 Octubre 2026</span></div>'''
 
-HTML_BDV = '''<div>Compra</div><div>Bs.S 865,18</div><div>Venta</div><div>Bs.S 890,68</div>
-<div>Spread 2,95%</div>'''
-
 
 def _binance_json(precios):
     import json
@@ -275,14 +324,13 @@ def _webs_falsas(url, datos=None):
     from . import tasas
     if url == tasas.URL_BINANCE:
         return BINANCE[datos['tradeType']]
-    return {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}[url]
+    return {tasas.URL_BCV: HTML_BCV}[url]
 
 
 class TasasTests(BaseAPI):
     def test_lee_las_fuentes(self):
         from . import tasas
         self.assertEqual(tasas.leer_bcv(HTML_BCV), (Decimal('880.11590000'), date(2026, 10, 16)))
-        self.assertEqual(tasas.leer_bdv(HTML_BDV), (Decimal('865.18'), Decimal('890.68')))
         # Mediana: un anuncio raro (1200 o 700) no mueve la tasa
         self.assertEqual(tasas.leer_binance(BINANCE['BUY']), Decimal('996.00'))
         self.assertEqual(tasas.leer_binance(BINANCE['SELL']), Decimal('993.25'))
@@ -302,12 +350,11 @@ class TasasTests(BaseAPI):
             self.assertEqual(r.data['bcv']['venta'], '880.1159')
             self.assertEqual(r.data['bcv']['fecha_valor'], '2026-10-16')
             self.assertTrue(r.data['bcv']['oficial'])
-            self.assertEqual((r.data['bdv']['compra'], r.data['bdv']['venta']), ('865.1800', '890.6800'))
-            self.assertFalse(r.data['bdv']['oficial'])
+            self.assertNotIn('bdv', r.data)
             self.assertEqual((r.data['binance']['compra'], r.data['binance']['venta']), ('996.0000', '993.2500'))
             self.assertFalse(r.data['binance']['oficial'])
             self.client.get('/api/tasas/')
-            self.assertEqual(descargar.call_count, 4)  # BCV, BDV y Binance (2); la segunda vez usa lo guardado
+            self.assertEqual(descargar.call_count, 3)  # BCV y Binance (2); la segunda vez usa lo guardado
 
     def test_si_una_fuente_falla_devuelve_la_ultima(self):
         from unittest import mock
@@ -321,7 +368,6 @@ class TasasTests(BaseAPI):
             r = self.client.get('/api/tasas/')
         self.assertEqual(r.data['bcv']['venta'], '879.0000')
         self.assertTrue(r.data['bcv']['desactualizada'])
-        self.assertIsNone(r.data['bdv']['venta'])
         self.assertIsNone(r.data['binance']['venta'])
 
     def test_solo_admin_fuerza_la_actualizacion(self):
@@ -331,7 +377,7 @@ class TasasTests(BaseAPI):
             self.como(self.encargado)
             self.client.get('/api/tasas/')
             self.client.get('/api/tasas/?actualizar=1')
-            self.assertEqual(descargar.call_count, 4)
+            self.assertEqual(descargar.call_count, 3)
             self.como(self.admin)
             self.client.get('/api/tasas/?actualizar=1')
-            self.assertEqual(descargar.call_count, 8)
+            self.assertEqual(descargar.call_count, 6)

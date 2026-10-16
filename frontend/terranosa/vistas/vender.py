@@ -1,7 +1,8 @@
 """Punto de venta: buscar productos, armar el carrito y cobrar."""
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QIcon, QKeySequence
-from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
+from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
+                             QHeaderView,
                              QLineEdit, QShortcut, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton,
                              QVBoxLayout, QWidget)
 
@@ -10,7 +11,7 @@ from ..tareas import ejecutar
 from ..widgets import (Columna, EtiquetaRecortada, Tabla, Tarjeta, boton, confirmar, etiqueta, mostrar_error,
                        rueda_en_boton)
 from .base import Pagina
-from .tasas import IndicadorTasas, en_bolivares, tasa_bcv
+from .tasas import IndicadorTasas, tasa_bcv
 
 
 def _color_stock(p):
@@ -186,8 +187,11 @@ class PaginaVender(Pagina):
 
         opciones = self.api.opciones or {}
         self.metodo = QComboBox()
+        self._monedas = {}
         for m in opciones.get('metodos_pago', []):
             self.metodo.addItem(m['nombre'], m['id'])
+            self._monedas[m['id']] = m.get('moneda', 'USD')
+        self.metodo.currentIndexChanged.connect(self._cambio_metodo)
         self.canal = QComboBox()
         for c in opciones.get('canales', []):
             self.canal.addItem(c['nombre'], c['id'])
@@ -210,9 +214,7 @@ class PaginaVender(Pagina):
         self.total = etiqueta(formato.dinero(0), 'total')
         fila_total.addWidget(self.total)
         tarjeta.capa.addLayout(fila_total)
-        self.total_bs = etiqueta('', 'subtitulo')
-        self.total_bs.setAlignment(Qt.AlignRight)
-        tarjeta.capa.addWidget(self.total_bs)
+        tarjeta.capa.addWidget(self._bloque_bolivares())
 
         self.boton_cobrar = boton('Cobrar   (F12)', 'activar', tipo='exito', grande=True)
         self.boton_cobrar.setMinimumHeight(52)
@@ -222,8 +224,77 @@ class PaginaVender(Pagina):
         tarjeta.capa.addWidget(self.boton_cobrar)
         return tarjeta
 
+    def _bloque_bolivares(self):
+        """Tasa editable y total en Bs. Solo se ve con métodos de pago en bolívares."""
+        self.bloque_bs = QWidget()
+        capa = QVBoxLayout(self.bloque_bs)
+        capa.setContentsMargins(0, 2, 0, 0)
+        capa.setSpacing(4)
+
+        fila_tasa = QHBoxLayout()
+        fila_tasa.addWidget(etiqueta('Tasa'))
+        self.tasa = QDoubleSpinBox()
+        self.tasa.setDecimals(2)
+        self.tasa.setRange(0, 100000000)
+        self.tasa.setGroupSeparatorShown(True)
+        self.tasa.setSuffix(' Bs/$')
+        self.tasa.setMinimumWidth(150)
+        self.tasa.setToolTip('Bs por dólar a la que se cobra esta venta. Viene con la del BCV;\n'
+                             'súbela si este pago lleva recargo. Se guarda en la venta.')
+        self.tasa.valueChanged.connect(self._tasa_editada)
+        fila_tasa.addWidget(self.tasa)
+        self.usar_bcv = boton('Usar BCV', tipo='plano')
+        self.usar_bcv.setToolTip('Volver a la tasa oficial del BCV')
+        self.usar_bcv.clicked.connect(self._poner_tasa_bcv)
+        fila_tasa.addWidget(self.usar_bcv)
+        fila_tasa.addStretch()
+        self.dif_tasa = etiqueta('', 'subtitulo')
+        fila_tasa.addWidget(self.dif_tasa)
+        capa.addLayout(fila_tasa)
+
+        fila_bs = QHBoxLayout()
+        fila_bs.addStretch()
+        fila_bs.addWidget(etiqueta('TOTAL EN Bs', 'etiqueta'))
+        self.total_bs = etiqueta(formato.bolivares(0), 'cifra')
+        fila_bs.addWidget(self.total_bs)
+        capa.addLayout(fila_bs)
+
+        self._tasa_manual = False
+        self._poniendo_tasa = False
+        self.bloque_bs.hide()
+        return self.bloque_bs
+
+    def _en_bolivares(self):
+        return self._monedas.get(self.metodo.currentData()) == 'VES'
+
+    def _cambio_metodo(self, *args):
+        self.bloque_bs.setVisible(self._en_bolivares())
+        self._pintar_total()
+
+    def _poner_tasa_bcv(self):
+        bcv = tasa_bcv(self.ventana.tasas)
+        self._tasa_manual = False
+        self._poniendo_tasa = True
+        self.tasa.setValue(float(bcv) if bcv else 0)
+        self._poniendo_tasa = False
+        self._pintar_total()
+
+    def _tasa_editada(self, *args):
+        if not self._poniendo_tasa:
+            self._tasa_manual = True
+        self._pintar_total()
+
+    def _tasa_cobro(self):
+        """Tasa con la que se cobra: la escrita, o la del BCV exacta si no se cambió."""
+        bcv = tasa_bcv(self.ventana.tasas)
+        if not self._tasa_manual and bcv:
+            return bcv
+        return formato.decimal('{:.2f}'.format(self.tasa.value()))
+
     def _tasas(self, tasas):
         self.indicador_tasas.poner(tasas)
+        if not self._tasa_manual:
+            self._poner_tasa_bcv()
         self._pintar_total()
 
     def _total(self):
@@ -306,7 +377,18 @@ class PaginaVender(Pagina):
         unidades = sum(l['cantidad'] for l in self.carrito)
         self.unidades.setText('{} producto{}'.format(unidades, '' if unidades == 1 else 's') if unidades else '')
         self.total.setText(formato.dinero(self._total()))
-        self.total_bs.setText(en_bolivares(self._total(), self.ventana.tasas) if self.carrito else '')
+        if not hasattr(self, 'bloque_bs') or not self._en_bolivares():
+            return
+        tasa = self._tasa_cobro()
+        self.total_bs.setText(formato.bolivares(self._total() * tasa) if tasa > 0 else 'Indica la tasa')
+        bcv = tasa_bcv(self.ventana.tasas)
+        if self._tasa_manual and bcv:
+            dif = (tasa / bcv - 1) * 100
+            self.dif_tasa.setText('{}{} % sobre BCV ({})'.format('+' if dif >= 0 else '', formato.numero(dif, 1),
+                                                                formato.numero(bcv)))
+        else:
+            self.dif_tasa.setText('Tasa BCV' if bcv else 'Sin tasa BCV: escríbela')
+        self.usar_bcv.setVisible(self._tasa_manual and bool(bcv))
 
     def _cambiar_cantidad(self, linea, valor):
         linea['cantidad'] = valor
@@ -330,6 +412,7 @@ class PaginaVender(Pagina):
         self.carrito = []
         self.metodo.setCurrentIndex(0)
         self.canal.setCurrentIndex(0)
+        self._poner_tasa_bcv()
         self._pintar_carrito()
 
     def cargar_venta(self, venta):
@@ -364,16 +447,25 @@ class PaginaVender(Pagina):
             formato.decimal(l['producto']['precio']) * l['cantidad'])) for l in self.carrito)
         texto = '{}\n\nTotal: {}\nPago: {} · {}'.format(detalle, total, self.metodo.currentText(),
                                                         self.canal.currentText())
-        tasa = tasa_bcv(self.ventana.tasas)
-        if tasa:
-            texto += '\nEquivalente: {} (tasa BCV {})'.format(formato.bolivares(self._total() * tasa),
-                                                           formato.numero(tasa))
+        tasa_envio = None
+        if self._en_bolivares():
+            tasa = self._tasa_cobro()
+            if tasa <= 0:
+                self.avisar('Indica la tasa de cambio para cobrar en bolívares.', 'error')
+                self.tasa.setFocus()
+                return
+            texto += '\n\nCOBRAR EN BOLÍVARES: {}\nTasa: {} Bs/$'.format(formato.bolivares(self._total() * tasa),
+                                                                       formato.numero(tasa))
+            bcv = tasa_bcv(self.ventana.tasas)
+            if self._tasa_manual:
+                texto += ' (BCV {})'.format(formato.numero(bcv)) if bcv else ''
+                tasa_envio = '{:.2f}'.format(self.tasa.value())
         if not confirmar(self, 'Confirmar venta', texto, si='Cobrar ' + total):
             return
         lineas = [{'producto': l['producto']['id'], 'cantidad': l['cantidad']} for l in self.carrito]
         metodo, canal = self.metodo.currentData(), self.canal.currentData()
         self._registrando(True)
-        ejecutar(lambda: self.api.vender(lineas, metodo, canal), al_terminar=self._vendido,
+        ejecutar(lambda: self.api.vender(lineas, metodo, canal, tasa_envio), al_terminar=self._vendido,
                  al_fallar=self._fallo_venta, widget=self)
 
     def _registrando(self, si):

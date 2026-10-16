@@ -1,4 +1,4 @@
-"""Indicador de las tasas de referencia Bs/USD (BCV oficial, Banco de Venezuela y Binance P2P)."""
+"""Indicador de las tasas de referencia Bs/USD (BCV oficial y USDT en Binance P2P)."""
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
@@ -14,16 +14,8 @@ def tasa_bcv(tasas):
     return formato.decimal(valor) if valor else None
 
 
-def en_bolivares(monto_usd, tasas):
-    """'≈ Bs 75.689,96 a tasa BCV' o '' si no hay tasa."""
-    tasa = tasa_bcv(tasas)
-    if not tasa:
-        return ''
-    return '≈ {} a tasa BCV'.format(formato.bolivares(formato.decimal(monto_usd) * tasa))
-
-
 class IndicadorTasas(QWidget):
-    """Etiquetas «BCV 880,12 Bs/$», «BDV 865,18 / 890,68» y «USDT 995,95 / 994,15». Se actualiza con poner()."""
+    """Etiquetas «BCV 880,12 Bs/$» y «USDT 995,95 / 994,15». Se actualiza con poner()."""
 
     def __init__(self, parent=None):
         super(IndicadorTasas, self).__init__(parent)
@@ -31,21 +23,18 @@ class IndicadorTasas(QWidget):
         capa.setContentsMargins(0, 0, 0, 0)
         capa.setSpacing(6)
         self.bcv = QLabel('BCV …')
-        self.bdv = QLabel('BDV …')
         self.usdt = QLabel('USDT …')
-        for l in (self.bcv, self.bdv, self.usdt):
+        for l in (self.bcv, self.usdt):
             l.setProperty('rol', 'chip')
             l.setTextFormat(Qt.RichText)
             l.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             capa.addWidget(l, 0, Qt.AlignVCenter)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.bdv.setStyleSheet('background: #EEF1F4; color: {};'.format(tema.TEXTO))
         self.usdt.setStyleSheet('background: #FDF3D1; color: {};'.format(tema.TEXTO))
         self.poner(None)
 
     def poner(self, tasas):
         bcv = (tasas or {}).get('bcv') or {}
-        bdv = (tasas or {}).get('bdv') or {}
         usdt = (tasas or {}).get('binance') or {}
         if bcv.get('venta'):
             self.bcv.setText('<b>BCV</b> {} Bs/$'.format(formato.numero(bcv['venta'])))
@@ -54,13 +43,6 @@ class IndicadorTasas(QWidget):
         else:
             self.bcv.setText('<b>BCV</b> sin datos')
             self.bcv.setToolTip('No se pudo obtener la tasa del BCV.')
-        if bdv.get('venta'):
-            self.bdv.setText('<b>BDV</b> {} / {}'.format(formato.numero(bdv['compra']), formato.numero(bdv['venta'])))
-            self.bdv.setToolTip('Banco de Venezuela: compra / venta\nReferencia NO oficial (dolarhoy.net)\n'
-                                'Actualizada: {}{}'.format(formato.fecha_y_hora(bdv['obtenida_en']), _aviso(bdv)))
-        else:
-            self.bdv.setText('<b>BDV</b> sin datos')
-            self.bdv.setToolTip('No se pudo obtener la tasa del Banco de Venezuela.')
         if usdt.get('venta'):
             self.usdt.setText('<b>USDT</b> {} / {}'.format(formato.numero(usdt['compra']),
                                                             formato.numero(usdt['venta'])))

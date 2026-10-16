@@ -75,9 +75,14 @@ class DetalleVenta(Tarjeta):
         if not hay:
             return
         self.titulo.setText('Venta #{}'.format(venta['id']))
-        self.datos.setText('{}\nVendió {}\n{}  ·  {}'.format(
-            formato.fecha_y_hora(venta['fecha']), venta['usuario'],
-            venta['metodo_pago_nombre'], venta['canal_nombre']))
+        datos = '{}\nVendió {}\n{}  ·  {}'.format(formato.fecha_y_hora(venta['fecha']), venta['usuario'],
+                                                venta['metodo_pago_nombre'], venta['canal_nombre'])
+        if venta.get('total_bs'):
+            datos += '\nCobrado: {} a {} Bs/$'.format(formato.bolivares(venta['total_bs']),
+                                                     formato.numero(venta['tasa_cambio']))
+            if venta.get('tasa_bcv') and formato.decimal(venta['tasa_bcv']) != formato.decimal(venta['tasa_cambio']):
+                datos += ' (BCV {})'.format(formato.numero(venta['tasa_bcv']))
+        self.datos.setText(datos)
         anulada = venta.get('anulada')
         if anulada:
             self.estado.setText('ANULADA por {} el {}\nMotivo: {}'.format(
