@@ -262,21 +262,41 @@ HTML_BDV = '''<div>Compra</div><div>Bs.S 865,18</div><div>Venta</div><div>Bs.S 8
 <div>Spread 2,95%</div>'''
 
 
+def _binance_json(precios):
+    import json
+    return json.dumps({'code': '000000', 'data': [{'adv': {'price': p}} for p in precios]})
+
+
+BINANCE = {'BUY': _binance_json(['994.50', '996.00', '996.00', '1200.00', '996.10']),
+           'SELL': _binance_json(['995.00', '993.50', '993.00', '700.00'])}
+
+
+def _webs_falsas(url, datos=None):
+    from . import tasas
+    if url == tasas.URL_BINANCE:
+        return BINANCE[datos['tradeType']]
+    return {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}[url]
+
+
 class TasasTests(BaseAPI):
-    def test_lee_las_paginas(self):
+    def test_lee_las_fuentes(self):
         from . import tasas
         self.assertEqual(tasas.leer_bcv(HTML_BCV), (Decimal('880.11590000'), date(2026, 10, 16)))
         self.assertEqual(tasas.leer_bdv(HTML_BDV), (Decimal('865.18'), Decimal('890.68')))
+        # Mediana: un anuncio raro (1200 o 700) no mueve la tasa
+        self.assertEqual(tasas.leer_binance(BINANCE['BUY']), Decimal('996.00'))
+        self.assertEqual(tasas.leer_binance(BINANCE['SELL']), Decimal('993.25'))
         self.assertEqual(tasas._numero('1.234,5'), Decimal('1234.5'))
         with self.assertRaises(tasas.ErrorTasa):
             tasas.leer_bcv('<html>sin datos</html>')
+        with self.assertRaises(tasas.ErrorTasa):
+            tasas.leer_binance('{"data": []}')
 
     def test_endpoint_guarda_y_reutiliza(self):
         from unittest import mock
         from . import tasas
-        paginas = {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}
         self.como(self.encargado)
-        with mock.patch.object(tasas, '_descargar', side_effect=lambda url: paginas[url]) as descargar:
+        with mock.patch.object(tasas, '_descargar', side_effect=_webs_falsas) as descargar:
             r = self.client.get('/api/tasas/')
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.data['bcv']['venta'], '880.1159')
@@ -284,10 +304,12 @@ class TasasTests(BaseAPI):
             self.assertTrue(r.data['bcv']['oficial'])
             self.assertEqual((r.data['bdv']['compra'], r.data['bdv']['venta']), ('865.1800', '890.6800'))
             self.assertFalse(r.data['bdv']['oficial'])
+            self.assertEqual((r.data['binance']['compra'], r.data['binance']['venta']), ('996.0000', '993.2500'))
+            self.assertFalse(r.data['binance']['oficial'])
             self.client.get('/api/tasas/')
-            self.assertEqual(descargar.call_count, 2)  # la segunda vez usa lo guardado
+            self.assertEqual(descargar.call_count, 4)  # BCV, BDV y Binance (2); la segunda vez usa lo guardado
 
-    def test_si_la_web_falla_devuelve_la_ultima(self):
+    def test_si_una_fuente_falla_devuelve_la_ultima(self):
         from unittest import mock
         from . import tasas
         from .models import TasaCambio
@@ -300,16 +322,16 @@ class TasasTests(BaseAPI):
         self.assertEqual(r.data['bcv']['venta'], '879.0000')
         self.assertTrue(r.data['bcv']['desactualizada'])
         self.assertIsNone(r.data['bdv']['venta'])
+        self.assertIsNone(r.data['binance']['venta'])
 
     def test_solo_admin_fuerza_la_actualizacion(self):
         from unittest import mock
         from . import tasas
-        paginas = {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}
-        with mock.patch.object(tasas, '_descargar', side_effect=lambda url: paginas[url]) as descargar:
+        with mock.patch.object(tasas, '_descargar', side_effect=_webs_falsas) as descargar:
             self.como(self.encargado)
             self.client.get('/api/tasas/')
             self.client.get('/api/tasas/?actualizar=1')
-            self.assertEqual(descargar.call_count, 2)
+            self.assertEqual(descargar.call_count, 4)
             self.como(self.admin)
             self.client.get('/api/tasas/?actualizar=1')
-            self.assertEqual(descargar.call_count, 4)
+            self.assertEqual(descargar.call_count, 8)

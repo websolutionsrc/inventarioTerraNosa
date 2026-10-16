@@ -142,6 +142,7 @@ class TasaCambio(models.Model):
     class Fuente(models.TextChoices):
         BCV = 'bcv', 'BCV (oficial)'
         BDV = 'bdv', 'Banco de Venezuela'
+        BINANCE = 'binance', 'Binance P2P (USDT)'
 
     fuente = models.CharField(max_length=10, choices=Fuente.choices)
     fecha_valor = models.DateField()

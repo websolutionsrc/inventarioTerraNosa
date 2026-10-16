@@ -42,6 +42,8 @@ cd inventarioTerrNosa
     incluido en `inventario/certificados/` para poder verificar HTTPS.
   - **Banco de Venezuela:** se lee de dolarhoy.net, porque el banco no la publica en su web. Es
     una referencia **no oficial**.
+  - **Binance P2P (USDT):** mediana de los 10 primeros anuncios de compra y de venta de USDT/VES,
+    con la búsqueda pública que usa la web de Binance P2P. Referencia de mercado **no oficial**.
   - Cada tasa se consulta como mucho cada 30 minutos y se guarda la última buena (`TasaCambio`).
 
 ## Endpoints (`/api/`, con cabecera `Authorization: Token <token>`)
@@ -52,7 +54,7 @@ cd inventarioTerrNosa
 | `POST logout/` | Autenticado | Invalida el token |
 | `GET yo/` | Autenticado | Datos del usuario conectado |
 | `GET config/` | Autenticado | Métodos de pago, canales, fecha de hoy y versión |
-| `GET tasas/` | Autenticado | Tasas Bs/USD: BCV (oficial) y Banco de Venezuela (no oficial). Admin: `?actualizar=1` |
+| `GET tasas/` | Autenticado | Tasas Bs/USD: BCV (oficial), Banco de Venezuela y USDT en Binance P2P (no oficiales). Admin: `?actualizar=1` |
 | `GET productos/` | Autenticado | Productos activos (admin: `?incluir_inactivos=1`) |
 | `POST/PUT/PATCH productos/` | Admin | Crear (con `stock_inicial`) o editar. El stock no se edita aquí |
 | `DELETE productos/{id}/` | Admin | Desactiva el producto |
@@ -75,6 +77,6 @@ cd inventarioTerrNosa
    en anuladas.
 4. `python manage.py collectstatic`, solo si se usa el panel `/admin/`.
 5. `python manage.py createsuperuser` para crear el primer admin.
-6. El servidor tiene que poder conectarse a `www.bcv.org.ve` y `dolarhoy.net` para las tasas. En
+6. El servidor tiene que poder conectarse a `www.bcv.org.ve`, `dolarhoy.net` y `p2p.binance.com` para las tasas. En
    PythonAnywhere, la cuenta gratuita solo permite una lista de sitios autorizados: hace falta el
    plan de pago.

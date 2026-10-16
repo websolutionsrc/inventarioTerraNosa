@@ -5,13 +5,18 @@ Tasas de cambio de referencia (bolívares por dólar).
   de Sectigo, así que se incluye en certificados/ para poder verificar HTTPS igualmente.
 - BDV: el Banco de Venezuela no publica su tasa en su web. Se toma la de dolarhoy.net, que
   la recoge de los canales del banco: es una referencia NO oficial.
+- Binance: precio del USDT en Binance P2P (Bs por USDT). Es la mediana de los primeros
+  anuncios de compra y de venta, usando la misma búsqueda pública que la web de Binance P2P.
+  Es una referencia de mercado, NO oficial.
 
 Cada fuente se consulta como mucho cada VIGENCIA y la última lectura buena se guarda en la
-base de datos (TasaCambio). Si una web no responde se devuelve la última conocida, marcada
+base de datos (TasaCambio). Si una fuente no responde se devuelve la última conocida, marcada
 como desactualizada.
 """
+import json
 import re
 import ssl
+import statistics
 import urllib.request
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -29,6 +34,9 @@ CERTIFICADO_SECTIGO = Path(__file__).resolve().parent / 'certificados' / 'sectig
 
 URL_BCV = 'https://www.bcv.org.ve/'
 URL_BDV = 'https://dolarhoy.net/venezuela/spread-bancos/bdv/'
+URL_BINANCE = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
+URL_BINANCE_WEB = 'https://p2p.binance.com/es/trade/all-payments/USDT?fiat=VES'
+ANUNCIOS_BINANCE = 10
 
 
 class ErrorTasa(Exception):
@@ -43,20 +51,22 @@ def _numero(texto):
         raise ErrorTasa('Número no válido: {!r}'.format(texto))
 
 
-def _descargar(url):
+def _descargar(url, datos=None):
+    """GET (o POST con JSON si hay datos) verificando HTTPS. Devuelve el texto de la respuesta."""
     contexto = ssl.create_default_context()
     if CERTIFICADO_SECTIGO.exists():
         contexto.load_verify_locations(str(CERTIFICADO_SECTIGO))
-    peticion = urllib.request.Request(url, headers={'User-Agent': NAVEGADOR, 'Accept-Language': 'es'})
+    cabeceras = {'User-Agent': NAVEGADOR, 'Accept-Language': 'es'}
+    cuerpo = None
+    if datos is not None:
+        cuerpo = json.dumps(datos).encode('utf-8')
+        cabeceras['Content-Type'] = 'application/json'
+    peticion = urllib.request.Request(url, data=cuerpo, headers=cabeceras)
     try:
         with urllib.request.urlopen(peticion, context=contexto, timeout=TIEMPO_ESPERA) as r:
             return r.read().decode('utf-8', 'replace')
     except Exception as e:  # red, SSL, HTTP...
         raise ErrorTasa('No se pudo leer {}: {}'.format(url, e))
-
-
-def _texto(html):
-    return re.sub(r'\s+', ' ', unescape(re.sub(r'<[^>]+>', ' ', html)))
 
 
 def leer_bcv(html):
@@ -70,6 +80,10 @@ def leer_bcv(html):
     return tasa, fecha
 
 
+def _texto(html):
+    return re.sub(r'\s+', ' ', unescape(re.sub(r'<[^>]+>', ' ', html)))
+
+
 def leer_bdv(html):
     """Devuelve (compra, venta) del Banco de Venezuela en dolarhoy.net."""
     m = re.search(r'Compra\s*Bs\.?S?\s*([\d.,]+)\s*Venta\s*Bs\.?S?\s*([\d.,]+)', _texto(html))
@@ -78,12 +92,35 @@ def leer_bdv(html):
     return _numero(m.group(1)), _numero(m.group(2))
 
 
+def leer_binance(texto_json):
+    """Mediana de los precios (Bs por USDT) de una respuesta de la búsqueda de Binance P2P."""
+    try:
+        datos = json.loads(texto_json)
+        precios = [Decimal(a['adv']['price']) for a in datos.get('data') or []]
+    except (ValueError, KeyError, TypeError, InvalidOperation):
+        raise ErrorTasa('Respuesta inesperada de Binance P2P.')
+    if not precios:
+        raise ErrorTasa('Binance P2P no devolvió anuncios de USDT/VES.')
+    return Decimal(statistics.median(precios))
+
+
+def _binance(tipo):
+    """tipo BUY: anuncios para comprar USDT (lo que cuesta un USDT). SELL: para venderlos."""
+    return leer_binance(_descargar(URL_BINANCE, {
+        'asset': 'USDT', 'fiat': 'VES', 'tradeType': tipo, 'page': 1, 'rows': ANUNCIOS_BINANCE,
+        'payTypes': [], 'publisherType': None,
+    }))
+
+
 def _actualizar(fuente):
     if fuente == TasaCambio.Fuente.BCV:
         tasa, fecha = leer_bcv(_descargar(URL_BCV))
         compra = venta = tasa
-    else:
+    elif fuente == TasaCambio.Fuente.BDV:
         compra, venta = leer_bdv(_descargar(URL_BDV))
+        fecha = timezone.localdate()
+    else:
+        compra, venta = _binance('BUY'), _binance('SELL')
         fecha = timezone.localdate()
     if not (Decimal('0.01') <= compra <= Decimal('100000000') and Decimal('0.01') <= venta <= Decimal('100000000')):
         raise ErrorTasa('Tasa fuera de rango: {} / {}'.format(compra, venta))
@@ -110,7 +147,9 @@ def _cuatro(valor):
 
 def resumen(forzar=False):
     datos = {}
-    for fuente, url, oficial in ((TasaCambio.Fuente.BCV, URL_BCV, True), (TasaCambio.Fuente.BDV, URL_BDV, False)):
+    for fuente, url, oficial in ((TasaCambio.Fuente.BCV, URL_BCV, True),
+                                 (TasaCambio.Fuente.BDV, URL_BDV, False),
+                                 (TasaCambio.Fuente.BINANCE, URL_BINANCE_WEB, False)):
         tasa, error = obtener(fuente, forzar)
         datos[fuente] = {
             'nombre': TasaCambio.Fuente(fuente).label,
