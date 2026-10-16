@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import (ConfigView, LoginView, LogoutView, MovimientoStockViewSet, ProductoViewSet, TasasView,
+from .views import (CobroBinanceViewSet, ConfigView, LoginView, LogoutView, MovimientoStockViewSet, ProductoViewSet, TasasView,
                     UsuarioViewSet, VentaViewSet, YoView)
 
 router = DefaultRouter()
@@ -9,6 +9,7 @@ router.register(r'usuarios', UsuarioViewSet)
 router.register(r'productos', ProductoViewSet, basename='producto')
 router.register(r'movimientos', MovimientoStockViewSet, basename='movimiento')
 router.register(r'ventas', VentaViewSet, basename='venta')
+router.register(r'cobros-binance', CobroBinanceViewSet, basename='cobro-binance')
 
 urlpatterns = [
     path('api/login/', LoginView.as_view(), name='api-login'),

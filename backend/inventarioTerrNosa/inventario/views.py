@@ -14,9 +14,10 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import services, tasas
-from .models import EntradaInventario, Producto, Usuario, Venta
-from .serializers import (AnularVentaSerializer, MovimientoStockSerializer, MoverStockSerializer,
+from . import binance, services, tasas
+from .models import CobroBinance, EntradaInventario, Producto, Usuario, Venta
+from .serializers import (AnularVentaSerializer, CobroBinanceSerializer, MovimientoStockSerializer,
+                          MoverStockSerializer, NuevoCobroBinanceSerializer,
                           NuevaVentaSerializer, ProductoSerializer, UsuarioSerializer, VentaSerializer)
 
 VERSION_API = '2.0.0'
@@ -86,7 +87,13 @@ class ConfigView(APIView):
             'hoy': timezone.localdate().isoformat(),
             'moneda': 'USD',
             'metodos_pago': [{'id': k, 'nombre': v, 'moneda': Venta.moneda_de(k)}
-                             for k, v in Venta.MetodoPago.choices],
+                             for k, v in Venta.MetodoPago.choices if k not in Venta.METODOS_RETIRADOS],
+            'binance': {
+                'verificacion': binance.configurado(),
+                'simulado': binance.simulado(),
+                'pay_id': settings.BINANCE_PAY_ID,
+                'minutos': settings.BINANCE_MINUTOS_COBRO,
+            },
             'canales': [{'id': k, 'nombre': v} for k, v in Venta.Canal.choices],
         })
 
@@ -233,6 +240,9 @@ class VentaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
     def create(self, request, *args, **kwargs):
         datos = NuevaVentaSerializer(data=request.data)
         datos.is_valid(raise_exception=True)
+        if (datos.validated_data['metodo_pago'] == Venta.MetodoPago.BINANCE and binance.configurado()
+                and not request.user.is_staff):
+            return _error('Los pagos con Binance se verifican: usa el cobro con Binance de la app.')
         try:
             venta = services.registrar_venta(request.user, **datos.validated_data)
         except services.ErrorNegocio as e:
@@ -302,3 +312,44 @@ class UsuarioViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cr
         user = serializer.save()
         if not user.is_active:
             Token.objects.filter(user=user).delete()
+
+
+# --- Cobros con Binance Pay ---------------------------------------------------------
+
+class CobroBinanceViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """
+    POST {lineas, canal}: abre un cobro y devuelve el monto en USDT que hay que recibir.
+    GET {id}: consulta Binance (si sigue pendiente) y devuelve el estado; al confirmarse
+    trae la venta creada. POST {id}/cancelar/: cancela el cobro si aún no se pagó.
+    """
+    serializer_class = CobroBinanceSerializer
+
+    def get_queryset(self):
+        qs = CobroBinance.objects.select_related('venta')
+        return qs if self.request.user.is_staff else qs.filter(usuario=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        datos = NuevoCobroBinanceSerializer(data=request.data)
+        datos.is_valid(raise_exception=True)
+        try:
+            cobro = services.crear_cobro_binance(request.user, **datos.validated_data)
+        except services.ErrorNegocio as e:
+            return _error(e)
+        return Response(self.get_serializer(cobro).data, status=status.HTTP_201_CREATED)
+
+    def retrieve(self, request, *args, **kwargs):
+        cobro = self.get_object()
+        error = None
+        if cobro.estado == CobroBinance.Estado.PENDIENTE:
+            error = services.conciliar_binance()
+            cobro.refresh_from_db()
+        datos = self.get_serializer(cobro).data
+        datos['aviso'] = error  # p. ej. Binance no responde: se sigue intentando
+        return Response(datos)
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        cobro = self.get_object()
+        services.conciliar_binance()  # por si el pago llegó justo ahora
+        cobro = services.cancelar_cobro_binance(cobro.pk)
+        return Response(self.get_serializer(cobro).data)

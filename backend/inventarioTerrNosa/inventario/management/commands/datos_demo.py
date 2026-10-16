@@ -91,9 +91,9 @@ class Command(BaseCommand):
         services.registrar_venta(encargado, [{'producto': p[3], 'cantidad': 2}, {'producto': p[13], 'cantidad': 2}],
                                  'efectivo_usd', 'tienda')
         services.registrar_venta(encargado, [{'producto': p[7], 'cantidad': 1}], 'punto', 'tienda')
-        mal = services.registrar_venta(encargado, [{'producto': p[1], 'cantidad': 1}], 'zelle', 'whatsapp')
+        mal = services.registrar_venta(encargado, [{'producto': p[1], 'cantidad': 1}], 'pago_movil', 'whatsapp')
         services.anular_venta(mal.id, encargado, 'Se cobró el morral equivocado')
-        services.registrar_venta(encargado, [{'producto': p[2], 'cantidad': 1}], 'zelle', 'whatsapp')
+        services.registrar_venta(encargado, [{'producto': p[2], 'cantidad': 1}], 'transferencia', 'whatsapp')
         services.mover_stock(p[4], admin, EntradaInventario.Tipo.AJUSTE, -1, 'Llegó con el cierre roto')
 
         self.stdout.write(self.style.SUCCESS(

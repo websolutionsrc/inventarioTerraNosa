@@ -103,7 +103,7 @@ class VentaTests(BaseAPI):
         self._tasa_bcv()
         self.como(self.encargado)
         r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.bolso.id, 'cantidad': 1}],
-                                              'metodo_pago': 'zelle', 'tasa': '950'}, format='json')
+                                              'metodo_pago': 'efectivo_usd', 'tasa': '950'}, format='json')
         self.assertEqual(r.data['moneda'], 'USD')
         self.assertIsNone(r.data['tasa_cambio'])
         self.assertIsNone(r.data['total_bs'])
@@ -223,12 +223,12 @@ class AnulacionTests(BaseAPI):
         self.assertEqual(self.anular().status_code, 200)
 
     def test_resumen_del_dia(self):
-        self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='zelle')
+        self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='efectivo_usd')
         self.anular()
         r = self.client.get('/api/ventas/resumen/')
         self.assertEqual(r.data['ventas'], 1)
         self.assertEqual(r.data['total'], '18.00')
-        self.assertEqual(r.data['por_metodo_pago'][0]['id'], 'zelle')
+        self.assertEqual(r.data['por_metodo_pago'][0]['id'], 'efectivo_usd')
         self.assertNotIn('anuladas', r.data)
         self.como(self.admin)
         r = self.client.get('/api/ventas/resumen/')
@@ -381,3 +381,147 @@ class TasasTests(BaseAPI):
             self.como(self.admin)
             self.client.get('/api/tasas/?actualizar=1')
             self.assertEqual(descargar.call_count, 6)
+
+
+class ZelleTests(BaseAPI):
+    def test_zelle_ya_no_se_ofrece_ni_se_acepta(self):
+        self.como(self.encargado)
+        metodos = [m['id'] for m in self.client.get('/api/config/').data['metodos_pago']]
+        self.assertNotIn('zelle', metodos)
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='zelle')
+        self.assertEqual(r.status_code, 400)
+
+
+def _ingreso(monto, minutos=0, id_=None, pagador='Ana'):
+    return {'id': id_ or 'TX{}{}'.format(monto, minutos), 'monto': Decimal(monto), 'pagador': pagador,
+            'fecha': timezone.now() + timedelta(minutes=minutos), 'tipo': 'PAY'}
+
+
+class CobroBinanceTests(BaseAPI):
+    def setUp(self):
+        super().setUp()
+        from django.test import override_settings
+        self._ajustes = override_settings(BINANCE_API_KEY='clave', BINANCE_API_SECRET='secreto')
+        self._ajustes.enable()
+        self.como(self.encargado)
+
+    def tearDown(self):
+        self._ajustes.disable()
+        super().tearDown()
+
+    def abrir(self, cantidad=2):  # 2 morrales = 51,00 USDT
+        r = self.client.post('/api/cobros-binance/', {'lineas': [{'producto': self.morral.id, 'cantidad': cantidad}]},
+                             format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def consultar(self, cobro_id, ingresos):
+        from unittest import mock
+        from . import binance
+        with mock.patch.object(binance, 'ingresos_desde', return_value=ingresos):
+            return self.client.get('/api/cobros-binance/{}/'.format(cobro_id)).data
+
+    def test_sin_pago_sigue_esperando_y_no_toca_el_stock(self):
+        cobro = self.abrir()
+        self.assertEqual((cobro['estado'], cobro['monto']), ('pendiente', '51.00'))
+        self.assertEqual(self.consultar(cobro['id'], [])['estado'], 'pendiente')
+        self.recargar()
+        self.assertEqual(self.morral.stock, 10)
+
+    def test_pago_exacto_crea_la_venta(self):
+        cobro = self.abrir()
+        datos = self.consultar(cobro['id'], [_ingreso('51.00', 1, 'TX1')])
+        self.assertEqual(datos['estado'], 'confirmado')
+        self.assertEqual(datos['venta']['metodo_pago'], 'binance')
+        self.assertEqual(datos['venta']['pago_binance']['transaccion_id'], 'TX1')
+        self.recargar()
+        self.assertEqual(self.morral.stock, 8)
+
+    def test_acepta_un_poco_menos_por_comision_pero_no_mucho_menos(self):
+        cobro = self.abrir()  # 51 USDT: se acepta desde 50,49 (1 %)
+        self.assertEqual(cobro['minimo'], '50.49')
+        self.assertEqual(self.consultar(cobro['id'], [_ingreso('50.00', 1)])['estado'], 'pendiente')
+        self.assertEqual(self.consultar(cobro['id'], [_ingreso('50.60', 1)])['estado'], 'confirmado')
+
+    def test_no_vale_un_pago_anterior_al_cobro(self):
+        cobro = self.abrir()
+        self.assertEqual(self.consultar(cobro['id'], [_ingreso('51.00', -10)])['estado'], 'pendiente')
+
+    def test_un_pago_sirve_para_un_solo_cobro(self):
+        primero, segundo = self.abrir(), self.abrir()
+        pago = [_ingreso('51.00', 1, 'TXUNICO')]
+        self.assertEqual(self.consultar(segundo['id'], pago)['estado'], 'pendiente')  # va al más antiguo
+        self.assertEqual(self.client.get('/api/cobros-binance/{}/'.format(primero['id'])).data['estado'],
+                         'confirmado')
+        dos_pagos = pago + [_ingreso('51.00', 2, 'TXOTRO')]
+        self.assertEqual(self.consultar(segundo['id'], dos_pagos)['estado'], 'confirmado')
+
+    def test_cancelar_y_caducar(self):
+        from unittest import mock
+        from . import binance
+        from .models import CobroBinance
+        cobro = self.abrir()
+        with mock.patch.object(binance, 'ingresos_desde', return_value=[]):
+            r = self.client.post('/api/cobros-binance/{}/cancelar/'.format(cobro['id']))
+        self.assertEqual(r.data['estado'], 'cancelado')
+        otro = self.abrir()
+        CobroBinance.objects.filter(pk=otro['id']).update(expira=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.consultar(otro['id'], [])['estado'], 'expirado')
+
+    def test_si_se_paga_justo_al_cancelar_gana_el_pago(self):
+        from unittest import mock
+        from . import binance
+        cobro = self.abrir()
+        with mock.patch.object(binance, 'ingresos_desde', return_value=[_ingreso('51.00', 1)]):
+            r = self.client.post('/api/cobros-binance/{}/cancelar/'.format(cobro['id']))
+        self.assertEqual(r.data['estado'], 'confirmado')
+
+    def test_pagado_sin_stock_queda_para_el_admin(self):
+        cobro = self.abrir(cantidad=10)
+        self.morral.stock = 5
+        self.morral.save()
+        datos = self.consultar(cobro['id'], [_ingreso('255.00', 1)])
+        self.assertEqual(datos['estado'], 'sin_venta')
+        self.assertIn('Stock insuficiente', datos['error'])
+
+    def test_binance_falla_y_se_sigue_esperando(self):
+        from unittest import mock
+        from . import binance
+        cobro = self.abrir()
+        with mock.patch.object(binance, 'ingresos_desde', side_effect=binance.ErrorBinance('caída')):
+            datos = self.client.get('/api/cobros-binance/{}/'.format(cobro['id'])).data
+        self.assertEqual((datos['estado'], datos['aviso']), ('pendiente', 'caída'))
+
+    def test_el_encargado_no_puede_saltarse_la_verificacion(self):
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='binance')
+        self.assertEqual(r.status_code, 400)
+
+    def test_otro_encargado_no_ve_mi_cobro(self):
+        cobro = self.abrir()
+        otro = Usuario.objects.create_user('encargado2', 'clave-encargado-456')
+        self.como(otro)
+        self.assertEqual(self.client.get('/api/cobros-binance/{}/'.format(cobro['id'])).status_code, 404)
+
+    def test_lee_la_respuesta_de_binance(self):
+        from . import binance
+        datos = binance.interpretar({'code': '000000', 'data': [
+            {'orderType': 'PAY', 'transactionId': 'A1', 'transactionTime': 1760630400000, 'amount': '51.00',
+             'currency': 'USDT', 'payerInfo': {'name': 'Ana'}},
+            {'orderType': 'PAY', 'transactionId': 'A2', 'transactionTime': 1760630400000, 'amount': '-10',
+             'currency': 'USDT'},
+            {'orderType': 'C2C', 'transactionId': 'A3', 'transactionTime': 1760630400000, 'amount': '5',
+             'currency': 'BNB'},
+        ]})
+        self.assertEqual([(d['id'], d['monto'], d['pagador']) for d in datos], [('A1', Decimal('51.00'), 'Ana')])
+        with self.assertRaises(binance.ErrorBinance):
+            binance.interpretar({'code': '-1022', 'message': 'firma no válida'})
+
+    def test_firma_hmac(self):
+        import hashlib
+        import hmac
+        from django.test import override_settings
+        from . import binance
+        with override_settings(BINANCE_API_SECRET='secreto'):
+            url = binance._firmado({'timestamp': 1})
+        esperada = hmac.new(b'secreto', b'timestamp=1', hashlib.sha256).hexdigest()
+        self.assertTrue(url.endswith('?timestamp=1&signature=' + esperada))

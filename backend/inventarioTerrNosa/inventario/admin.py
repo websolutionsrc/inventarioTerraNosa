@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
+from .models import CobroBinance, EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
 
 
 @admin.register(Usuario)
@@ -60,3 +60,13 @@ class MovimientoAdmin(admin.ModelAdmin):
 class TasaCambioAdmin(admin.ModelAdmin):
     list_display = ('fuente', 'fecha_valor', 'compra', 'venta', 'obtenida_en')
     list_filter = ('fuente',)
+
+
+@admin.register(CobroBinance)
+class CobroBinanceAdmin(admin.ModelAdmin):
+    list_display = ('id', 'creado', 'usuario', 'monto', 'estado', 'monto_recibido', 'pagador', 'venta', 'error')
+    list_filter = ('estado',)
+    readonly_fields = [f.name for f in CobroBinance._meta.fields]
+
+    def has_add_permission(self, request):
+        return False

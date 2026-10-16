@@ -109,6 +109,9 @@ class Venta(models.Model):
         BINANCE = 'binance', 'Binance (USDT)'
         OTRO = 'otro', 'Otro'
 
+    # Métodos que ya no se ofrecen. Se mantienen en la lista para que las ventas antiguas se vean bien.
+    METODOS_RETIRADOS = {MetodoPago.ZELLE}
+
     # Métodos que se cobran en bolívares: la venta guarda la tasa usada y el total en Bs
     METODOS_EN_BOLIVARES = {MetodoPago.EFECTIVO_BS, MetodoPago.PAGO_MOVIL, MetodoPago.PUNTO,
                             MetodoPago.TRANSFERENCIA}
@@ -188,3 +191,44 @@ class SalidaInventario(models.Model):
     @property
     def subtotal(self):
         return (self.precio_unitario or Decimal('0')) * self.cantidad
+
+
+class CobroBinance(models.Model):
+    """
+    Cobro por Binance Pay a la espera de que llegue el pago. La venta se crea cuando el
+    servidor encuentra en Binance un ingreso de USDT que encaja (ver services.conciliar_binance).
+    """
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'pendiente', 'Esperando el pago'
+        CONFIRMADO = 'confirmado', 'Pagado'
+        CANCELADO = 'cancelado', 'Cancelado'
+        EXPIRADO = 'expirado', 'Caducado'
+        SIN_VENTA = 'sin_venta', 'Pagado pero sin venta'  # p. ej. el stock se agotó mientras tanto
+
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name='cobros_binance')
+    lineas = models.JSONField()  # [{"producto": id, "cantidad": n}]
+    canal = models.CharField(max_length=20, choices=Venta.Canal.choices, default=Venta.Canal.TIENDA)
+    monto = models.DecimalField(max_digits=12, decimal_places=2)  # USDT esperados
+    creado = models.DateTimeField(auto_now_add=True)
+    expira = models.DateTimeField()
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.PENDIENTE, db_index=True)
+
+    # Datos del pago encontrado en Binance
+    transaccion_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    monto_recibido = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+    pagador = models.CharField(max_length=150, blank=True, default='')
+    pagado_en = models.DateTimeField(null=True, blank=True)
+    venta = models.OneToOneField(Venta, on_delete=models.PROTECT, null=True, blank=True, related_name='cobro_binance')
+    error = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        ordering = ['creado', 'id']
+
+
+class IngresoBinanceSimulado(models.Model):
+    """Pago falso de Binance para probar sin clave de API (BINANCE_SIMULADO, solo en local)."""
+    transaccion_id = models.CharField(max_length=64, unique=True)
+    monto = models.DecimalField(max_digits=18, decimal_places=8)
+    pagador = models.CharField(max_length=150, blank=True, default='Cliente de prueba')
+    fecha = models.DateTimeField(auto_now_add=True)

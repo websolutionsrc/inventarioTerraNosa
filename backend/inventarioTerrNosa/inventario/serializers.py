@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import EntradaInventario, Producto, SalidaInventario, Usuario, Venta
+from .models import CobroBinance, EntradaInventario, Producto, SalidaInventario, Usuario, Venta
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -90,15 +90,23 @@ class VentaSerializer(serializers.ModelSerializer):
     canal_nombre = serializers.CharField(source='get_canal_display', read_only=True)
     anulada_por = serializers.CharField(source='anulada_por.username', read_only=True, default=None)
     moneda = serializers.SerializerMethodField()
+    pago_binance = serializers.SerializerMethodField()
 
     class Meta:
         model = Venta
         fields = ['id', 'fecha', 'usuario', 'metodo_pago', 'metodo_pago_nombre', 'moneda', 'canal', 'canal_nombre',
-                  'total', 'tasa_cambio', 'tasa_bcv', 'total_bs', 'lineas', 'anulada', 'anulada_por', 'anulada_en',
-                  'motivo_anulacion']
+                  'total', 'tasa_cambio', 'tasa_bcv', 'total_bs', 'pago_binance', 'lineas', 'anulada', 'anulada_por',
+                  'anulada_en', 'motivo_anulacion']
 
     def get_moneda(self, obj):
         return Venta.moneda_de(obj.metodo_pago)
+
+    def get_pago_binance(self, obj):
+        cobro = getattr(obj, 'cobro_binance', None)
+        if not cobro:
+            return None
+        return {'monto_recibido': str(cobro.monto_recibido), 'pagador': cobro.pagador,
+                'transaccion_id': cobro.transaccion_id}
 
     CAMPOS_ANULACION = ('anulada', 'anulada_por', 'anulada_en', 'motivo_anulacion')
 
@@ -120,6 +128,12 @@ class NuevaVentaSerializer(serializers.Serializer):
     lineas = NuevaLineaSerializer(many=True, allow_empty=False)
     metodo_pago = serializers.ChoiceField(choices=Venta.MetodoPago.choices)
     canal = serializers.ChoiceField(choices=Venta.Canal.choices, default=Venta.Canal.TIENDA)
+
+    def validate_metodo_pago(self, valor):
+        if valor in Venta.METODOS_RETIRADOS:
+            raise serializers.ValidationError('Este método de pago ya no se acepta.')
+        return valor
+
     # Bs por dólar para cobros en bolívares; si no viene se usa la del BCV
     tasa = serializers.DecimalField(max_digits=16, decimal_places=4, required=False, allow_null=True,
                                     min_value=Decimal('0.0001'))
@@ -127,3 +141,31 @@ class NuevaVentaSerializer(serializers.Serializer):
 
 class AnularVentaSerializer(serializers.Serializer):
     motivo = serializers.CharField(max_length=255, allow_blank=False, trim_whitespace=True)
+
+
+class CobroBinanceSerializer(serializers.ModelSerializer):
+    estado_nombre = serializers.CharField(source='get_estado_display', read_only=True)
+    segundos_restantes = serializers.SerializerMethodField()
+    minimo = serializers.SerializerMethodField()
+    venta = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CobroBinance
+        fields = ['id', 'estado', 'estado_nombre', 'monto', 'minimo', 'creado', 'expira', 'segundos_restantes',
+                  'transaccion_id', 'monto_recibido', 'pagador', 'pagado_en', 'venta', 'error']
+
+    def get_segundos_restantes(self, obj):
+        from django.utils import timezone
+        return max(0, int((obj.expira - timezone.now()).total_seconds()))
+
+    def get_minimo(self, obj):
+        from . import binance
+        return str(binance.margen(obj.monto)[0].quantize(Decimal('0.01')))
+
+    def get_venta(self, obj):
+        return VentaSerializer(obj.venta, context=self.context).data if obj.venta else None
+
+
+class NuevoCobroBinanceSerializer(serializers.Serializer):
+    lineas = NuevaLineaSerializer(many=True, allow_empty=False)
+    canal = serializers.ChoiceField(choices=Venta.Canal.choices, default=Venta.Canal.TIENDA)

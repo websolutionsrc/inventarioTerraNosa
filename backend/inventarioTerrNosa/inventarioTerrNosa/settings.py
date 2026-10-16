@@ -157,6 +157,17 @@ REST_FRAMEWORK = {
     'COERCE_DECIMAL_TO_STRING': True,
 }
 
+# Cobros con Binance Pay verificados automáticamente (ver inventario/binance.py).
+# La clave de API debe ser de SOLO LECTURA y, si se puede, limitada a la IP del servidor.
+BINANCE_API_KEY = _env('BINANCE_API_KEY', '')
+BINANCE_API_SECRET = _env('BINANCE_API_SECRET', '')
+BINANCE_PAY_ID = _env('BINANCE_PAY_ID', '')            # se muestra al cajero para que se lo dé al cliente
+BINANCE_SIMULADO = _env_bool('BINANCE_SIMULADO', False)  # pagos falsos para probar (solo con DEBUG)
+BINANCE_MINUTOS_COBRO = int(_env('BINANCE_MINUTOS_COBRO', '15'))
+BINANCE_TOLERANCIA_USDT = _env('BINANCE_TOLERANCIA_USDT', '0.10')  # se acepta hasta esto de menos…
+BINANCE_TOLERANCIA_PCT = _env('BINANCE_TOLERANCIA_PCT', '1')       # …o este % de menos (lo mayor)
+BINANCE_EXCESO_PCT = _env('BINANCE_EXCESO_PCT', '10')              # y hasta este % de más
+
 # En el hosting (DEBUG desactivado) todo va por HTTPS
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
