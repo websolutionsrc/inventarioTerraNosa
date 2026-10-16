@@ -1,0 +1,7 @@
+; Copia este archivo como config.ini junto al .exe para que la app arranque ya apuntando
+; al servidor. Si no existe, la app usa http://127.0.0.1:8000 y se puede cambiar desde
+; la pantalla de entrada ("Cambiar"); ese cambio se guarda en %APPDATA%\TerraNosa\config.ini.
+
+[servidor]
+url = http://127.0.0.1:8000
+; url = https://tuusuario.pythonanywhere.com

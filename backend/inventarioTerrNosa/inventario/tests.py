@@ -33,6 +33,8 @@ class LoginTests(BaseAPI):
         self.assertTrue(r.data['token'])
         self.assertFalse(r.data['is_staff'])
         self.assertEqual(r.data['usuario']['username'], 'encargado')
+        self.encargado.refresh_from_db()
+        self.assertIsNotNone(self.encargado.last_login)
 
     def test_login_incorrecto(self):
         r = self.client.post('/api/login/', {'username': 'encargado', 'password': 'mal'})
@@ -171,6 +173,16 @@ class AnulacionTests(BaseAPI):
         self.como(self.admin)
         r = self.client.get('/api/ventas/resumen/')
         self.assertEqual(r.data['anuladas']['ventas'], 1)
+
+    def test_resumen_del_admin_respeta_las_fechas(self):
+        Venta.objects.filter(pk=self.venta_id).update(fecha=timezone.now() - timedelta(days=1))
+        self.vender([{'producto': self.bolso.id, 'cantidad': 1}])
+        self.como(self.admin)
+        hoy = self.client.get('/api/ventas/resumen/').data
+        self.assertEqual((hoy['ventas'], hoy['total']), (1, '18.00'))
+        ayer = (timezone.localdate() - timedelta(days=1)).isoformat()
+        dos_dias = self.client.get(f'/api/ventas/resumen/?desde={ayer}').data
+        self.assertEqual((dos_dias['ventas'], dos_dias['total']), (2, '94.50'))
 
 
 class ProductoYStockTests(BaseAPI):

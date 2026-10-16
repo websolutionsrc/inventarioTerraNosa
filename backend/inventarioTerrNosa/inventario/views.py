@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from django.db.models import Count, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -59,6 +60,7 @@ class LoginView(APIView):
         if not user:
             return Response({"detail": "Usuario o contraseña incorrectos."}, status=status.HTTP_400_BAD_REQUEST)
         token, _ = Token.objects.get_or_create(user=user)
+        update_last_login(None, user)
         # "token" e "is_staff" en la raíz se mantienen para la app 1.x
         return Response({"token": token.key, "is_staff": user.is_staff, "usuario": _datos_usuario(user)})
 
@@ -197,7 +199,7 @@ class VentaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
         user = self.request.user
         params = self.request.query_params
 
-        if self.action == 'list' or not user.is_staff:
+        if self.action in ('list', 'resumen') or not user.is_staff:
             inicio, fin = self._rango()
             qs = qs.filter(fecha__gte=inicio, fecha__lt=fin)
 
