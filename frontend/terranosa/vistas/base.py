@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QVBoxLayout, QWidget
 
-from ..widgets import Cabecera
+from ..widgets import Cabecera, Tabla
 
 
 class Pagina(QWidget):
@@ -27,5 +27,7 @@ class Pagina(QWidget):
 
     def error(self, error):
         """Errores de carga: aviso arriba. Si la sesión caducó, vuelve al login."""
+        for tabla in self.findChildren(Tabla):
+            tabla.dejar_de_cargar()
         if not self.ventana.sesion_caducada(error):
             self.avisar(error.mensaje, 'error')

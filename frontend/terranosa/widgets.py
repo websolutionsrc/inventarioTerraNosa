@@ -1,15 +1,99 @@
 """Piezas de interfaz que se repiten en todas las pantallas."""
-from PyQt5.QtCore import QAbstractTableModel, QModelIndex, QSize, QSortFilterProxyModel, Qt, QTimer
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtCore import (QAbstractTableModel, QEvent, QModelIndex, QPointF, QRectF, QSize, QSortFilterProxyModel, Qt,
+                          QTimer)
+from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                              QPushButton, QSizePolicy, QTableView, QVBoxLayout, QWidget)
 
 from . import tema
 
+INTERVALO_RUEDA = 30  # ms entre fotogramas
+PASO_RUEDA = 12       # grados por fotograma (una vuelta cada ~0,9 s)
+
 
 def refrescar_estilo(widget):
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+
+# --- Rueda de carga ------------------------------------------------------------------
+
+def dibujar_rueda(p, centro, radio, angulo, color, grosor=3.0, pista=None):
+    """Arco que gira, dibujado con QPainter (sin GIF: se ve igual en Windows 7 y en el .exe)."""
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    rect = QRectF(centro.x() - radio, centro.y() - radio, 2 * radio, 2 * radio)
+    if pista:
+        p.setPen(QPen(QColor(pista), grosor))
+        p.drawEllipse(rect)
+    lapiz = QPen(QColor(color), grosor)
+    lapiz.setCapStyle(Qt.RoundCap)
+    p.setPen(lapiz)
+    p.drawArc(rect, int(-angulo * 16), int(-110 * 16))
+    p.restore()
+
+
+class Rueda(QWidget):
+    """Rueda de carga suelta. Empieza oculta: iniciar() la muestra y la hace girar."""
+
+    def __init__(self, tam=28, color=tema.CELESTE, grosor=3.0, pista=None, parent=None):
+        super(Rueda, self).__init__(parent)
+        self.setFixedSize(tam, tam)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.color, self.grosor, self.pista = color, grosor, pista
+        self._angulo = 0
+        self._reloj = QTimer(self)
+        self._reloj.setInterval(INTERVALO_RUEDA)
+        self._reloj.timeout.connect(self._girar)
+        self.hide()
+
+    def _girar(self):
+        self._angulo = (self._angulo + PASO_RUEDA) % 360
+        self.update()
+
+    def iniciar(self):
+        self.show()
+        self._reloj.start()
+
+    def detener(self):
+        self._reloj.stop()
+        self.hide()
+
+    def paintEvent(self, evento):
+        p = QPainter(self)
+        radio = self.width() / 2.0 - self.grosor
+        dibujar_rueda(p, QPointF(self.width() / 2.0, self.height() / 2.0), radio, self._angulo, self.color,
+                      self.grosor, self.pista)
+        p.end()
+
+
+class _RuedaEnBoton(Rueda):
+    """Rueda dentro de un botón, justo a la izquierda del texto (se recoloca si cambia el tamaño)."""
+
+    def __init__(self, boton, color, tam):
+        super(_RuedaEnBoton, self).__init__(tam, color, 2.5, pista='#4DFFFFFF', parent=boton)
+        self.boton = boton
+        boton.installEventFilter(self)
+
+    def colocar(self):
+        b = self.boton
+        ancho_texto = b.fontMetrics().width(b.text())
+        x = (b.width() - ancho_texto) // 2 - self.width() - 10
+        self.move(max(8, x), (b.height() - self.height()) // 2)
+
+    def iniciar(self):
+        self.colocar()
+        super(_RuedaEnBoton, self).iniciar()
+
+    def eventFilter(self, objeto, evento):
+        if objeto is self.boton and evento.type() == QEvent.Resize and self.isVisible():
+            self.colocar()
+        return False
+
+
+def rueda_en_boton(boton, color='white', tam=18):
+    """Rueda (oculta) para un botón. Cambia el texto del botón antes de llamar a iniciar()."""
+    return _RuedaEnBoton(boton, color, tam)
 
 
 def boton(texto, icono=None, tipo=None, grande=False, color_icono=None):
@@ -260,6 +344,10 @@ class Tabla(QTableView):
         self.setModel(self.filtro)
         self.texto_vacio = vacio
         self.cargando = False
+        self._angulo = 0
+        self._reloj = QTimer(self)
+        self._reloj.setInterval(INTERVALO_RUEDA)
+        self._reloj.timeout.connect(self._girar)
 
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -286,14 +374,25 @@ class Tabla(QTableView):
 
     def poner_filas(self, filas, mantener_seleccion=True):
         anterior = self.fila_seleccionada() if mantener_seleccion else None
-        self.cargando = False
+        self.dejar_de_cargar()
         self.modelo.poner_filas(filas)
         if anterior is not None and 'id' in anterior:
             self.seleccionar_id(anterior['id'])
         self.viewport().update()
 
     def poner_cargando(self):
+        """Muestra la rueda de carga (con un velo encima si ya hay datos) hasta poner_filas()."""
         self.cargando = True
+        self._reloj.start()
+        self.viewport().update()
+
+    def dejar_de_cargar(self):
+        self.cargando = False
+        self._reloj.stop()
+        self.viewport().update()
+
+    def _girar(self):
+        self._angulo = (self._angulo + PASO_RUEDA) % 360
         self.viewport().update()
 
     def fila_seleccionada(self):
@@ -313,12 +412,26 @@ class Tabla(QTableView):
 
     def paintEvent(self, evento):
         super(Tabla, self).paintEvent(evento)
-        if self.filtro.rowCount() == 0:
+        area = self.viewport().rect()
+        if self.cargando:
+            p = QPainter(self.viewport())
+            centro = QPointF(area.center().x(), area.center().y() - 12)
+            if self.filtro.rowCount():
+                # Velo sobre los datos que se están actualizando y una tarjeta para que se lea
+                p.fillRect(area, QColor(255, 255, 255, 150))
+                p.setRenderHint(QPainter.Antialiasing)
+                p.setPen(QPen(QColor(tema.BORDE), 1))
+                p.setBrush(QColor('white'))
+                p.drawRoundedRect(QRectF(centro.x() - 70, centro.y() - 32, 140, 92), 10, 10)
+            dibujar_rueda(p, centro, 16, self._angulo, tema.CELESTE, 3.5, pista='#E1E6EC')
+            p.setPen(QColor(tema.TEXTO_SUAVE))
+            p.drawText(QRectF(area.left(), centro.y() + 26, area.width(), 24), Qt.AlignCenter, 'Cargando…')
+            p.end()
+        elif self.filtro.rowCount() == 0:
             p = QPainter(self.viewport())
             p.setPen(QColor(tema.TEXTO_SUAVE))
-            texto = 'Cargando…' if self.cargando else (
-                'Ningún resultado para la búsqueda.' if self.modelo.rowCount() else self.texto_vacio)
-            p.drawText(self.viewport().rect().adjusted(20, 20, -20, -20), Qt.AlignCenter | Qt.TextWordWrap, texto)
+            texto = 'Ningún resultado para la búsqueda.' if self.modelo.rowCount() else self.texto_vacio
+            p.drawText(area.adjusted(20, 20, -20, -20), Qt.AlignCenter | Qt.TextWordWrap, texto)
             p.end()
 
 

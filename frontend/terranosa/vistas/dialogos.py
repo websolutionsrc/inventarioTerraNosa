@@ -294,7 +294,7 @@ class DialogoMovimientos(Dialogo):
         self.cuerpo.addWidget(self.tabla)
         self.tabla.poner_cargando()
         ejecutar(lambda: api.movimientos(producto_id=producto['id']), al_terminar=self.tabla.poner_filas,
-                 al_fallar=lambda e: self.mostrar_error(e.mensaje), widget=self)
+                 al_fallar=lambda e: (self.tabla.dejar_de_cargar(), self.mostrar_error(e.mensaje)), widget=self)
 
 
 class DialogoUsuario(Dialogo):

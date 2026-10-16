@@ -51,6 +51,8 @@ class PaginaUsuarios(Pagina):
         self.cargar()
 
     def cargar(self):
+        if not self.tabla.modelo.rowCount():
+            self.tabla.poner_cargando()
         ejecutar(self.api.usuarios, al_terminar=self._cargado, al_fallar=self.error, widget=self)
 
     def _cargado(self, usuarios):

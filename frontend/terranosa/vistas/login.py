@@ -7,7 +7,7 @@ from .. import VERSION, recursos, tema
 from ..api import Api
 from ..config import normalizar_url
 from ..tareas import ejecutar
-from ..widgets import boton, etiqueta
+from ..widgets import boton, etiqueta, rueda_en_boton
 
 
 class PantallaLogin(QWidget):
@@ -69,6 +69,8 @@ class PantallaLogin(QWidget):
 
         self.entrar = boton('Entrar', tipo='primario', grande=True)
         self.entrar.clicked.connect(self.intentar)
+        self.rueda = rueda_en_boton(self.entrar, tam=22)
+        self.ocupado = False
         capa.addWidget(self.entrar)
         capa.addSpacing(12)
 
@@ -127,12 +129,19 @@ class PantallaLogin(QWidget):
         self.error.setVisible(bool(texto))
 
     def _ocupado(self, si):
-        self.entrar.setEnabled(not si)
+        # El botón conserva su color mientras gira la rueda; los campos solo se bloquean
+        self.ocupado = si
         self.entrar.setText('Entrando…' if si else 'Entrar')
-        self.usuario.setEnabled(not si)
-        self.clave.setEnabled(not si)
+        if si:
+            self.rueda.iniciar()
+        else:
+            self.rueda.detener()
+        self.usuario.setReadOnly(si)
+        self.clave.setReadOnly(si)
 
     def intentar(self):
+        if self.ocupado:
+            return
         usuario, clave = self.usuario.text().strip(), self.clave.text()
         if not usuario or not clave:
             self._mostrar_error('Escribe tu usuario y tu contraseña.')

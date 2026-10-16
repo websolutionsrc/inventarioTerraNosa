@@ -1,13 +1,14 @@
 """Punto de venta: buscar productos, armar el carrito y cobrar."""
 from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
                              QLineEdit, QShortcut, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton,
                              QVBoxLayout, QWidget)
 
 from .. import formato, tema
 from ..tareas import ejecutar
-from ..widgets import Columna, EtiquetaRecortada, Tabla, Tarjeta, boton, confirmar, etiqueta, mostrar_error
+from ..widgets import (Columna, EtiquetaRecortada, Tabla, Tarjeta, boton, confirmar, etiqueta, mostrar_error,
+                       rueda_en_boton)
 from .base import Pagina
 
 
@@ -28,6 +29,7 @@ class PaginaVender(Pagina):
         self.productos = {}
         self.carrito = []  # [{"producto": {...}, "cantidad": n}]
         self._venta_pendiente = None
+        self._cobrando = False
 
         refrescar = self.cabecera.agregar(boton('Actualizar productos', 'refrescar'))
         refrescar.clicked.connect(self.cargar_productos)
@@ -131,6 +133,8 @@ class PaginaVender(Pagina):
             self.agregar(p)
 
     def agregar(self, producto, cantidad=1):
+        if self._cobrando:
+            return
         if producto['stock'] <= 0:
             self.avisar('«{}» no tiene stock.'.format(producto['nombre']), 'error')
             return
@@ -207,6 +211,8 @@ class PaginaVender(Pagina):
         self.boton_cobrar = boton('Cobrar   (F12)', 'activar', tipo='exito', grande=True)
         self.boton_cobrar.setMinimumHeight(52)
         self.boton_cobrar.clicked.connect(self.cobrar)
+        self._icono_cobrar = self.boton_cobrar.icon()
+        self.rueda_cobrar = rueda_en_boton(self.boton_cobrar, tam=24)
         tarjeta.capa.addWidget(self.boton_cobrar)
         return tarjeta
 
@@ -334,7 +340,7 @@ class PaginaVender(Pagina):
         self.avisar(mensaje, 'info')
 
     def cobrar(self):
-        if not self.carrito or not self.boton_cobrar.isEnabled():
+        if not self.carrito or self._cobrando:
             return
         total = formato.dinero(self._total())
         detalle = '\n'.join('{} × {}  =  {}'.format(l['cantidad'], l['producto']['nombre'], formato.dinero(
@@ -345,13 +351,25 @@ class PaginaVender(Pagina):
             return
         lineas = [{'producto': l['producto']['id'], 'cantidad': l['cantidad']} for l in self.carrito]
         metodo, canal = self.metodo.currentData(), self.canal.currentData()
-        self.boton_cobrar.setEnabled(False)
-        self.boton_cobrar.setText('Registrando…')
+        self._registrando(True)
         ejecutar(lambda: self.api.vender(lineas, metodo, canal), al_terminar=self._vendido,
                  al_fallar=self._fallo_venta, widget=self)
 
+    def _registrando(self, si):
+        """Mientras se registra la venta: rueda en el botón y carrito bloqueado."""
+        self._cobrando = si
+        self.boton_cobrar.setText('Registrando venta…' if si else 'Cobrar   (F12)')
+        self.boton_cobrar.setIcon(QIcon() if si else self._icono_cobrar)
+        if si:
+            self.rueda_cobrar.iniciar()
+        else:
+            self.rueda_cobrar.detener()
+        for w in (self.tabla_carrito, self.vaciar, self.metodo, self.canal):
+            w.setEnabled(not si)
+
     def _restaurar_boton(self):
-        self.boton_cobrar.setText('Cobrar   (F12)')
+        self._registrando(False)
+        self.vaciar.setEnabled(bool(self.carrito))
         self.boton_cobrar.setEnabled(bool(self.carrito))
 
     def _vendido(self, venta):
