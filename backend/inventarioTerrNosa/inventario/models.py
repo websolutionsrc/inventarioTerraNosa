@@ -1,29 +1,37 @@
-from django.db import models
-from django.db.models import Sum
-from django.core.exceptions import ValidationError
-from django.utils.translation import gettext_lazy as _
+"""
+Modelos del inventario de TerraNosa.
+
+El stock de un producto solo cambia a través de inventario/services.py, que deja
+siempre un registro: una línea de venta (SalidaInventario) o un movimiento manual
+(EntradaInventario). Nada se borra de verdad: los productos se desactivan y las
+ventas se anulan, para que el admin pueda ver qué pasó.
+"""
+from decimal import Decimal
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.db import models
+
 
 class UsuarioManager(BaseUserManager):
-    def create_user(self, username, password, is_admin=False, is_active=True):
+    def create_user(self, username, password, is_staff=False, is_active=True):
         if not username:
             raise ValueError("El usuario debe tener un nombre de usuario")
-        user = self.model(username=username, password=password)
         if not password:
             raise ValueError("El usuario debe tener una contraseña")
+        user = self.model(username=username, is_staff=is_staff, is_admin=is_staff, is_active=is_active)
         user.set_password(password)
         user.save(using=self._db)
         return user
-    
+
     def create_superuser(self, username, password):
-        user = self.create_user(username, password)
-        user.is_admin = True
+        user = self.create_user(username, password, is_staff=True)
         user.is_superuser = True
-        user.is_staff = True   
         user.save(using=self._db)
         return user
 
+
 class Usuario(AbstractBaseUser, PermissionsMixin):
+    """is_staff = admin (inventario, historial, usuarios). Sin is_staff = encargado."""
     username = models.CharField(max_length=150, unique=True)
     is_admin = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
@@ -33,80 +41,111 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     groups = models.ManyToManyField(
         "auth.Group",
-        related_name="usuario_set",  
+        related_name="usuario_set",
         blank=True
     )
     user_permissions = models.ManyToManyField(
         "auth.Permission",
-        related_name="usuario_permission_set",  
+        related_name="usuario_permission_set",
         blank=True
     )
-    
+
     USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = [] 
-    
+    REQUIRED_FIELDS = []
+
     objects = UsuarioManager()
+
+    def __str__(self):
+        return self.username
 
 
 class Producto(models.Model):
     nombre = models.CharField(max_length=255)
-    tipo = models.CharField(max_length=255, blank=True, null=True) 
-    proveedor = models.CharField(max_length=255, blank=True, null=True) 
-    precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True) 
-    stock = models.IntegerField() 
+    tipo = models.CharField(max_length=255, blank=True, default='')
+    proveedor = models.CharField(max_length=255, blank=True, default='')
+    precio = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))  # USD
+    stock = models.IntegerField(default=0)
+    stock_minimo = models.PositiveIntegerField(default=0)  # se resalta cuando stock <= stock_minimo
+    activo = models.BooleanField(default=True)  # "eliminar" lo desactiva y conserva su historial
+    creado = models.DateTimeField(auto_now_add=True, null=True)
+    actualizado = models.DateTimeField(auto_now=True, null=True)
+
+    class Meta:
+        ordering = ['nombre']
 
     def __str__(self):
         return f"{self.nombre} - Stock: {self.stock}"
-    
+
+
 class EntradaInventario(models.Model):
-    producto = models.ForeignKey(Producto, on_delete=models.CASCADE)
-    usuario_admin = models.ForeignKey(Usuario, on_delete=models.CASCADE)
-    cantidad = models.IntegerField()
-    fecha = models.DateTimeField(auto_now_add=True) 
-    
-    def save(self, *args, **kwargs):
-        if self.pk:  # Updating an existing record
-            old_entry = EntradaInventario.objects.get(pk=self.pk)
-            diff = self.cantidad - old_entry.cantidad
-        else:  # New entry
-            diff = self.cantidad
+    """Movimiento manual de stock hecho por un admin: entrada de mercancía o ajuste."""
 
-        self.producto.stock += diff
-        self.producto.save()
-        super().save(*args, **kwargs) 
+    class Tipo(models.TextChoices):
+        INICIAL = 'inicial', 'Stock inicial'
+        ENTRADA = 'entrada', 'Entrada de mercancía'
+        AJUSTE = 'ajuste', 'Ajuste'
 
-    def delete(self, *args, **kwargs):
-        super().delete(*args, **kwargs) 
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='movimientos')
+    usuario_admin = models.ForeignKey(Usuario, on_delete=models.PROTECT)
+    tipo = models.CharField(max_length=10, choices=Tipo.choices, default=Tipo.ENTRADA)
+    cantidad = models.IntegerField()  # negativa en ajustes que restan
+    stock_resultante = models.IntegerField(null=True, blank=True)
+    motivo = models.CharField(max_length=255, blank=True, default='')
+    fecha = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha', '-id']
+
 
 class Venta(models.Model):
-    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE)
-    fecha = models.DateTimeField(auto_now_add=True)
-    is_deleted = models.BooleanField(default=False)  # Soft delete flag
+
+    class MetodoPago(models.TextChoices):
+        EFECTIVO_USD = 'efectivo_usd', 'Efectivo $'
+        EFECTIVO_BS = 'efectivo_bs', 'Efectivo Bs'
+        PAGO_MOVIL = 'pago_movil', 'Pago móvil'
+        PUNTO = 'punto', 'Punto de venta'
+        TRANSFERENCIA = 'transferencia', 'Transferencia'
+        ZELLE = 'zelle', 'Zelle'
+        OTRO = 'otro', 'Otro'
+
+    class Canal(models.TextChoices):
+        TIENDA = 'tienda', 'Tienda'
+        MARKETPLACE = 'marketplace', 'Marketplace'
+        WHATSAPP = 'whatsapp', 'WhatsApp'
+        OTRO = 'otro', 'Otro'
+
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name='ventas')
+    fecha = models.DateTimeField(auto_now_add=True, db_index=True)
+    metodo_pago = models.CharField(max_length=20, choices=MetodoPago.choices, default=MetodoPago.EFECTIVO_USD)
+    canal = models.CharField(max_length=20, choices=Canal.choices, default=Canal.TIENDA)
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))  # USD
+
+    # Anulación: la venta sigue en la base de datos; el encargado deja de verla y el admin
+    # la ve marcada con quién, cuándo y por qué.
+    anulada = models.BooleanField(default=False)
+    anulada_por = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True,
+                                    related_name='ventas_anuladas')
+    anulada_en = models.DateTimeField(null=True, blank=True)
+    motivo_anulacion = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        ordering = ['-fecha', '-id']
 
     def delete(self, *args, **kwargs):
-        """ Soft delete instead of actual delete """
-        self.is_deleted = True
-        self.save()
+        raise RuntimeError("Las ventas no se borran: se anulan con services.anular_venta().")
+
 
 class SalidaInventario(models.Model):
-    venta = models.ForeignKey(Venta, on_delete=models.CASCADE)
-    producto = models.ForeignKey(Producto, on_delete=models.CASCADE)
+    """Línea de una venta. Guarda el precio del momento para que el historial no cambie."""
+    venta = models.ForeignKey(Venta, on_delete=models.CASCADE, related_name='lineas')
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='salidas')
     cantidad = models.IntegerField()
-    fecha = models.DateTimeField(auto_now_add=True) 
-    is_deleted = models.BooleanField(default=False) 
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # null en ventas antiguas
+    fecha = models.DateTimeField(auto_now_add=True)
 
-    def save(self, *args, **kwargs):
-        if not self.pk:  # New salida
-            new_stock_quantity = self.producto.stock - self.cantidad
-            if new_stock_quantity < 0:
-                raise ValidationError(_("Not enough stock available!"))
-            self.producto.stock -= self.cantidad
+    class Meta:
+        ordering = ['id']
 
-        self.producto.save()
-        super().save(*args, **kwargs)
-        
-    def delete(self, *args, **kwargs):
-        if not self.is_deleted:
-            self.is_deleted = True
-            self.producto.stock += self.cantidad
-            self.save(update_fields=['is_deleted'])
+    @property
+    def subtotal(self):
+        return (self.precio_unitario or Decimal('0')) * self.cantidad
