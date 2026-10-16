@@ -1,7 +1,7 @@
 """Punto de venta: buscar productos, armar el carrito y cobrar."""
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QIcon, QKeySequence
-from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
+from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
                              QHeaderView,
                              QLineEdit, QShortcut, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton,
                              QVBoxLayout, QWidget)
@@ -11,6 +11,7 @@ from ..tareas import ejecutar
 from ..widgets import (Columna, EtiquetaRecortada, Tabla, Tarjeta, boton, confirmar, etiqueta, mostrar_error,
                        rueda_en_boton)
 from .base import Pagina
+from .cobro_binance import DialogoCobroBinance
 from .tasas import IndicadorTasas, tasa_bcv
 
 
@@ -460,13 +461,26 @@ class PaginaVender(Pagina):
             if self._tasa_manual:
                 texto += ' (BCV {})'.format(formato.numero(bcv)) if bcv else ''
                 tasa_envio = '{:.2f}'.format(self.tasa.value())
-        if not confirmar(self, 'Confirmar venta', texto, si='Cobrar ' + total):
-            return
         lineas = [{'producto': l['producto']['id'], 'cantidad': l['cantidad']} for l in self.carrito]
         metodo, canal = self.metodo.currentData(), self.canal.currentData()
+        if metodo == 'binance' and self.api.binance_verificado:
+            texto += '\n\nSe abrirá la espera del pago: la venta se registra sola cuando llegue a Binance.'
+            if confirmar(self, 'Cobrar con Binance', texto, si='Cobrar {} USDT'.format(formato.numero(self._total()))):
+                self._cobrar_binance(lineas, canal)
+            return
+        if not confirmar(self, 'Confirmar venta', texto, si='Cobrar ' + total):
+            return
         self._registrando(True)
         ejecutar(lambda: self.api.vender(lineas, metodo, canal, tasa_envio), al_terminar=self._vendido,
                  al_fallar=self._fallo_venta, widget=self)
+
+    def _cobrar_binance(self, lineas, canal):
+        dialogo = DialogoCobroBinance(self, self.api, lineas, canal, self._total())
+        if dialogo.exec_() == QDialog.Accepted and dialogo.venta:
+            self._vendido(dialogo.venta)
+        else:
+            self.avisar('Cobro con Binance sin completar: el carrito sigue aquí.', 'info')
+            self.cargar_productos()
 
     def _registrando(self, si):
         """Mientras se registra la venta: rueda en el botón y carrito bloqueado."""

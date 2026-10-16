@@ -82,6 +82,11 @@ class DetalleVenta(Tarjeta):
                                                      formato.numero(venta['tasa_cambio']))
             if venta.get('tasa_bcv') and formato.decimal(venta['tasa_bcv']) != formato.decimal(venta['tasa_cambio']):
                 datos += ' (BCV {})'.format(formato.numero(venta['tasa_bcv']))
+        binance = venta.get('pago_binance')
+        if binance:
+            datos += '\nBinance: llegaron {} USDT{}\nTransacción {}'.format(
+                formato.numero(binance['monto_recibido']),
+                ' de {}'.format(binance['pagador']) if binance.get('pagador') else '', binance['transaccion_id'])
         self.datos.setText(datos)
         anulada = venta.get('anulada')
         if anulada:

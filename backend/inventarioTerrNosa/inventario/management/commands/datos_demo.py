@@ -16,7 +16,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from inventario import services
-from inventario.models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
+from inventario.models import (CobroBinance, EntradaInventario, IngresoBinanceSimulado, Producto, SalidaInventario,
+                               TasaCambio, Usuario, Venta)
 
 USUARIOS = [('admin', 'admin-terranosa', True), ('encargado', 'encargado-terranosa', False)]
 
@@ -51,6 +52,8 @@ class Command(BaseCommand):
             raise CommandError('datos_demo solo se usa en local (DEBUG activado).')
 
         if opciones['borrar']:
+            CobroBinance.objects.all().delete()
+            IngresoBinanceSimulado.objects.all().delete()
             SalidaInventario.objects.all().delete()
             Venta.objects.all().delete()
             EntradaInventario.objects.all().delete()

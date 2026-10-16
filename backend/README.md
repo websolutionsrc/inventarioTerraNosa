@@ -66,7 +66,37 @@ cd inventarioTerrNosa
 | `POST ventas/` | Autenticado | `{lineas: [{producto, cantidad}], metodo_pago, canal, tasa?}`. `tasa` (Bs/$) solo cuenta en métodos en bolívares; si no viene, se usa la del BCV |
 | `POST ventas/{id}/anular/` | Autenticado | `{motivo}`: anula y devuelve el stock |
 | `GET ventas/resumen/` | Autenticado | Totales del día (o del periodo, si es admin) por método de pago y por canal |
+| `POST cobros-binance/` | Autenticado | `{lineas, canal}`: abre un cobro con Binance y devuelve el monto en USDT |
+| `GET cobros-binance/{id}/` | Autenticado | Mira en Binance si llegó el pago; al confirmarse trae la venta creada |
+| `POST cobros-binance/{id}/cancelar/` | Autenticado | Cancela el cobro si aún no se pagó |
 | `GET/POST/PATCH usuarios/` | Admin | Gestión de usuarios. No se borran: se desactivan |
+
+## Cobros con Binance Pay verificados
+
+1. Al cobrar con Binance, la app abre un **cobro** con el total en USDT y espera.
+2. Cada pocos segundos el servidor lee los **pagos recibidos en la cuenta de Binance de la
+   tienda** (`GET /sapi/v1/pay/transactions`, firmada) y busca uno que:
+   - llegue **después** de abrir el cobro (con un minuto de margen por desajustes de reloj);
+   - tenga el **monto** esperado con margen: hasta un 1 % o 0,10 USDT de menos (por si hay
+     comisión) y hasta un 10 % de más;
+   - **no se haya usado** en otro cobro. Si dos cobros esperan el mismo monto, el pago va al más
+     antiguo.
+3. Al encontrarlo crea la venta (método Binance) y guarda el ID de la transacción y quién pagó.
+   Si el producto se agotó mientras tanto, el cobro queda como «pagado pero sin venta» (se ve en
+   `/admin/`).
+4. El cobro caduca a los 15 minutos y se puede cancelar. Si el pago llega justo al cancelar, gana
+   el pago.
+
+**Para activarlo:** en el `.env`, `BINANCE_API_KEY` y `BINANCE_API_SECRET` de la cuenta de la
+tienda, con una clave de **solo lectura** (sin operar ni retirar), limitada a la IP del servidor.
+`BINANCE_PAY_ID` es opcional: solo se muestra al cajero. Los márgenes y los minutos se cambian con
+las variables `BINANCE_*` de `.env.ejemplo`.
+
+**Para probar sin clave (solo en local):** con `BINANCE_SIMULADO=true`, cada pago se simula con
+`python manage.py simular_pago_binance 46.00`.
+
+Con la verificación activa, el encargado no puede registrar ventas con Binance sin pasar por el
+cobro. Zelle ya no se ofrece como método de pago; las ventas antiguas con Zelle se siguen viendo.
 
 ## Pasar al hosting
 
@@ -78,6 +108,6 @@ cd inventarioTerrNosa
    en anuladas.
 4. `python manage.py collectstatic`, solo si se usa el panel `/admin/`.
 5. `python manage.py createsuperuser` para crear el primer admin.
-6. El servidor tiene que poder conectarse a `www.bcv.org.ve` y `p2p.binance.com` para las tasas. En
+6. El servidor tiene que poder conectarse a `www.bcv.org.ve` y `p2p.binance.com` para las tasas, y a `api.binance.com` para los cobros. En
    PythonAnywhere, la cuenta gratuita solo permite una lista de sitios autorizados: hace falta el
    plan de pago.

@@ -159,6 +159,22 @@ class Api(object):
     def anular_venta(self, venta_id, motivo):
         return self._pedir('POST', 'ventas/{}/anular/'.format(venta_id), {'motivo': motivo})
 
+    # --- Cobros con Binance (verificados por el servidor) ---
+
+    @property
+    def binance_verificado(self):
+        return bool(((self.opciones or {}).get('binance') or {}).get('verificacion'))
+
+    def crear_cobro_binance(self, lineas, canal):
+        return self._pedir('POST', 'cobros-binance/', {'lineas': lineas, 'canal': canal})
+
+    def cobro_binance(self, cobro_id):
+        """Estado del cobro. El servidor mira en Binance si ya llegó el pago."""
+        return self._pedir('GET', 'cobros-binance/{}/'.format(cobro_id))
+
+    def cancelar_cobro_binance(self, cobro_id):
+        return self._pedir('POST', 'cobros-binance/{}/cancelar/'.format(cobro_id))
+
     # --- Usuarios ---
 
     def usuarios(self):
