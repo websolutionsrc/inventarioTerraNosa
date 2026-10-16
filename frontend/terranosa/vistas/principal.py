@@ -1,9 +1,10 @@
-from PyQt5.QtCore import QSize, Qt, pyqtSignal
+from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QPixmap
 from PyQt5.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QMainWindow, QPushButton, QShortcut,
                              QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import recursos, tema
+from ..tareas import ejecutar
 from ..widgets import Aviso, confirmar
 from .historial import PaginaHistorial
 from .inventario import PaginaInventario
@@ -15,11 +16,13 @@ from .ventas_hoy import PaginaVentasHoy
 class VentanaPrincipal(QMainWindow):
     """Menú lateral + pantallas. Emite 'salir' (con un mensaje) al cerrar sesión."""
     salir = pyqtSignal(str)
+    tasas_cambiadas = pyqtSignal(object)  # tasas Bs/USD nuevas
 
     def __init__(self, api):
         super(VentanaPrincipal, self).__init__()
         self.api = api
         self._cerrando = False
+        self.tasas = None  # tasas Bs/USD (las pantallas se crean antes de que lleguen)
         self.setWindowTitle('TerraNosa · Inventario y ventas')
         self.setMinimumSize(980, 620)
 
@@ -58,6 +61,20 @@ class VentanaPrincipal(QMainWindow):
             QShortcut(QKeySequence('F{}'.format(i + 1)), self, activated=b.click)
         self.grupo.buttonClicked[int].connect(self.ir_a)
         self.ir_a(0)
+
+        # Tasas de cambio: al entrar y cada 30 minutos (el servidor las guarda en caché)
+        self._reloj_tasas = QTimer(self)
+        self._reloj_tasas.setInterval(30 * 60 * 1000)
+        self._reloj_tasas.timeout.connect(self.cargar_tasas)
+        self._reloj_tasas.start()
+        self.cargar_tasas()
+
+    def cargar_tasas(self):
+        ejecutar(self.api.tasas, al_terminar=self._tasas_cargadas, widget=self)  # si falla, se queda la anterior
+
+    def _tasas_cargadas(self, tasas):
+        self.tasas = tasas
+        self.tasas_cambiadas.emit(tasas)
 
     def _barra_lateral(self):
         barra = QWidget()

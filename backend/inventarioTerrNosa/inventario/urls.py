@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import (ConfigView, LoginView, LogoutView, MovimientoStockViewSet, ProductoViewSet,
+from .views import (ConfigView, LoginView, LogoutView, MovimientoStockViewSet, ProductoViewSet, TasasView,
                     UsuarioViewSet, VentaViewSet, YoView)
 
 router = DefaultRouter()
@@ -15,5 +15,6 @@ urlpatterns = [
     path('api/logout/', LogoutView.as_view(), name='api-logout'),
     path('api/yo/', YoView.as_view(), name='api-yo'),
     path('api/config/', ConfigView.as_view(), name='api-config'),
+    path('api/tasas/', TasasView.as_view(), name='api-tasas'),
     path('api/', include(router.urls)),
 ]

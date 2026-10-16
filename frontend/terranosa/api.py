@@ -111,6 +111,10 @@ class Api(object):
         self.opciones = self._pedir('GET', 'config/')
         return self.opciones
 
+    def tasas(self):
+        """Tasas Bs/USD de referencia: {'bcv': {...}, 'bdv': {...}}."""
+        return self._pedir('GET', 'tasas/')
+
     # --- Productos ---
 
     def productos(self, incluir_inactivos=False):

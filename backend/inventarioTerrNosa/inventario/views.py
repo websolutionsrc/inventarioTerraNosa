@@ -14,7 +14,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import services
+from . import services, tasas
 from .models import EntradaInventario, Producto, Usuario, Venta
 from .serializers import (AnularVentaSerializer, MovimientoStockSerializer, MoverStockSerializer,
                           NuevaVentaSerializer, ProductoSerializer, UsuarioSerializer, VentaSerializer)
@@ -88,6 +88,17 @@ class ConfigView(APIView):
             'metodos_pago': [{'id': k, 'nombre': v} for k, v in Venta.MetodoPago.choices],
             'canales': [{'id': k, 'nombre': v} for k, v in Venta.Canal.choices],
         })
+
+
+class TasasView(APIView):
+    """
+    Tasas de referencia Bs/USD: BCV (oficial) y Banco de Venezuela (no oficial).
+    Se refrescan como mucho cada 30 minutos; ?actualizar=1 fuerza la consulta (solo admin).
+    """
+
+    def get(self, request):
+        forzar = request.user.is_staff and request.query_params.get('actualizar') == '1'
+        return Response(tasas.resumen(forzar=forzar))
 
 
 # --- Productos y stock --------------------------------------------------------------

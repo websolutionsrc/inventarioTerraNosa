@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EntradaInventario, Producto, SalidaInventario, Usuario, Venta
+from .models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
 
 
 @admin.register(Usuario)
@@ -54,3 +54,9 @@ class MovimientoAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(TasaCambio)
+class TasaCambioAdmin(admin.ModelAdmin):
+    list_display = ('fuente', 'fecha_valor', 'compra', 'venta', 'obtenida_en')
+    list_filter = ('fuente',)

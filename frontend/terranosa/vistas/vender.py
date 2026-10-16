@@ -10,6 +10,7 @@ from ..tareas import ejecutar
 from ..widgets import (Columna, EtiquetaRecortada, Tabla, Tarjeta, boton, confirmar, etiqueta, mostrar_error,
                        rueda_en_boton)
 from .base import Pagina
+from .tasas import IndicadorTasas, en_bolivares, tasa_bcv
 
 
 def _color_stock(p):
@@ -31,6 +32,8 @@ class PaginaVender(Pagina):
         self._venta_pendiente = None
         self._cobrando = False
 
+        self.indicador_tasas = self.cabecera.agregar(IndicadorTasas())
+        ventana.tasas_cambiadas.connect(self._tasas)
         refrescar = self.cabecera.agregar(boton('Actualizar productos', 'refrescar'))
         refrescar.clicked.connect(self.cargar_productos)
 
@@ -207,6 +210,9 @@ class PaginaVender(Pagina):
         self.total = etiqueta(formato.dinero(0), 'total')
         fila_total.addWidget(self.total)
         tarjeta.capa.addLayout(fila_total)
+        self.total_bs = etiqueta('', 'subtitulo')
+        self.total_bs.setAlignment(Qt.AlignRight)
+        tarjeta.capa.addWidget(self.total_bs)
 
         self.boton_cobrar = boton('Cobrar   (F12)', 'activar', tipo='exito', grande=True)
         self.boton_cobrar.setMinimumHeight(52)
@@ -215,6 +221,10 @@ class PaginaVender(Pagina):
         self.rueda_cobrar = rueda_en_boton(self.boton_cobrar, tam=24)
         tarjeta.capa.addWidget(self.boton_cobrar)
         return tarjeta
+
+    def _tasas(self, tasas):
+        self.indicador_tasas.poner(tasas)
+        self._pintar_total()
 
     def _total(self):
         return sum((formato.decimal(l['producto']['precio']) * l['cantidad'] for l in self.carrito),
@@ -296,6 +306,7 @@ class PaginaVender(Pagina):
         unidades = sum(l['cantidad'] for l in self.carrito)
         self.unidades.setText('{} producto{}'.format(unidades, '' if unidades == 1 else 's') if unidades else '')
         self.total.setText(formato.dinero(self._total()))
+        self.total_bs.setText(en_bolivares(self._total(), self.ventana.tasas) if self.carrito else '')
 
     def _cambiar_cantidad(self, linea, valor):
         linea['cantidad'] = valor
@@ -353,6 +364,10 @@ class PaginaVender(Pagina):
             formato.decimal(l['producto']['precio']) * l['cantidad'])) for l in self.carrito)
         texto = '{}\n\nTotal: {}\nPago: {} · {}'.format(detalle, total, self.metodo.currentText(),
                                                         self.canal.currentText())
+        tasa = tasa_bcv(self.ventana.tasas)
+        if tasa:
+            texto += '\nEquivalente: {} (tasa BCV {})'.format(formato.bolivares(self._total() * tasa),
+                                                           formato.numero(tasa))
         if not confirmar(self, 'Confirmar venta', texto, si='Cobrar ' + total):
             return
         lineas = [{'producto': l['producto']['id'], 'cantidad': l['cantidad']} for l in self.carrito]

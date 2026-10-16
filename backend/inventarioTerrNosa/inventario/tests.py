@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.utils import timezone
@@ -251,3 +251,65 @@ class UsuarioTests(BaseAPI):
         self.como(self.admin)
         r = self.client.patch(f'/api/usuarios/{self.admin.id}/', {'is_staff': False})
         self.assertEqual(r.status_code, 400)
+
+
+HTML_BCV = '''<div id="dolar" class="col-sm-12"><div class="field-content"><span> USD</span></div>
+<div class="centrado"><strong class="strong-tb"> 880,11590000 </strong></div></div>
+<div class="pull-right dinpro">Fecha Valor: <span class="date-display-single"
+content="2026-10-16T00:00:00-04:00">Viernes, 16 Octubre 2026</span></div>'''
+
+HTML_BDV = '''<div>Compra</div><div>Bs.S 865,18</div><div>Venta</div><div>Bs.S 890,68</div>
+<div>Spread 2,95%</div>'''
+
+
+class TasasTests(BaseAPI):
+    def test_lee_las_paginas(self):
+        from . import tasas
+        self.assertEqual(tasas.leer_bcv(HTML_BCV), (Decimal('880.11590000'), date(2026, 10, 16)))
+        self.assertEqual(tasas.leer_bdv(HTML_BDV), (Decimal('865.18'), Decimal('890.68')))
+        self.assertEqual(tasas._numero('1.234,5'), Decimal('1234.5'))
+        with self.assertRaises(tasas.ErrorTasa):
+            tasas.leer_bcv('<html>sin datos</html>')
+
+    def test_endpoint_guarda_y_reutiliza(self):
+        from unittest import mock
+        from . import tasas
+        paginas = {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}
+        self.como(self.encargado)
+        with mock.patch.object(tasas, '_descargar', side_effect=lambda url: paginas[url]) as descargar:
+            r = self.client.get('/api/tasas/')
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.data['bcv']['venta'], '880.1159')
+            self.assertEqual(r.data['bcv']['fecha_valor'], '2026-10-16')
+            self.assertTrue(r.data['bcv']['oficial'])
+            self.assertEqual((r.data['bdv']['compra'], r.data['bdv']['venta']), ('865.1800', '890.6800'))
+            self.assertFalse(r.data['bdv']['oficial'])
+            self.client.get('/api/tasas/')
+            self.assertEqual(descargar.call_count, 2)  # la segunda vez usa lo guardado
+
+    def test_si_la_web_falla_devuelve_la_ultima(self):
+        from unittest import mock
+        from . import tasas
+        from .models import TasaCambio
+        TasaCambio.objects.create(fuente='bcv', fecha_valor=date(2026, 10, 15), compra=Decimal('879'),
+                                  venta=Decimal('879'))
+        TasaCambio.objects.filter(fuente='bcv').update(obtenida_en=timezone.now() - timedelta(hours=2))
+        self.como(self.encargado)
+        with mock.patch.object(tasas, '_descargar', side_effect=tasas.ErrorTasa('sin conexión')):
+            r = self.client.get('/api/tasas/')
+        self.assertEqual(r.data['bcv']['venta'], '879.0000')
+        self.assertTrue(r.data['bcv']['desactualizada'])
+        self.assertIsNone(r.data['bdv']['venta'])
+
+    def test_solo_admin_fuerza_la_actualizacion(self):
+        from unittest import mock
+        from . import tasas
+        paginas = {tasas.URL_BCV: HTML_BCV, tasas.URL_BDV: HTML_BDV}
+        with mock.patch.object(tasas, '_descargar', side_effect=lambda url: paginas[url]) as descargar:
+            self.como(self.encargado)
+            self.client.get('/api/tasas/')
+            self.client.get('/api/tasas/?actualizar=1')
+            self.assertEqual(descargar.call_count, 2)
+            self.como(self.admin)
+            self.client.get('/api/tasas/?actualizar=1')
+            self.assertEqual(descargar.call_count, 4)

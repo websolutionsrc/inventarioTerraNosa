@@ -23,6 +23,10 @@ def dinero(valor):
     return '$ ' + numero(valor)
 
 
+def bolivares(valor):
+    return 'Bs ' + numero(valor)
+
+
 def fecha_hora(texto):
     """Fecha ISO del servidor (ya en hora de Venezuela) a datetime."""
     if not texto:

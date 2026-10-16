@@ -189,7 +189,7 @@ class Cabecera(QWidget):
         capa.addLayout(self.botones)
 
     def agregar(self, widget):
-        self.botones.addWidget(widget)
+        self.botones.addWidget(widget, 0, Qt.AlignVCenter)
         return widget
 
 

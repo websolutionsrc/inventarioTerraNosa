@@ -136,6 +136,27 @@ class Venta(models.Model):
         raise RuntimeError("Las ventas no se borran: se anulan con services.anular_venta().")
 
 
+class TasaCambio(models.Model):
+    """Última tasa conocida de cada fuente (Bs por USD). La rellena inventario/tasas.py."""
+
+    class Fuente(models.TextChoices):
+        BCV = 'bcv', 'BCV (oficial)'
+        BDV = 'bdv', 'Banco de Venezuela'
+
+    fuente = models.CharField(max_length=10, choices=Fuente.choices)
+    fecha_valor = models.DateField()
+    compra = models.DecimalField(max_digits=16, decimal_places=4)
+    venta = models.DecimalField(max_digits=16, decimal_places=4)
+    obtenida_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-obtenida_en']
+        constraints = [models.UniqueConstraint(fields=['fuente', 'fecha_valor'], name='tasa_unica_por_dia')]
+
+    def __str__(self):
+        return '{} {} {}/{}'.format(self.fuente, self.fecha_valor, self.compra, self.venta)
+
+
 class SalidaInventario(models.Model):
     """Línea de una venta. Guarda el precio del momento para que el historial no cambie."""
     venta = models.ForeignKey(Venta, on_delete=models.CASCADE, related_name='lineas')
