@@ -106,6 +106,7 @@ class Venta(models.Model):
         PUNTO = 'punto', 'Punto de venta'
         TRANSFERENCIA = 'transferencia', 'Transferencia'
         ZELLE = 'zelle', 'Zelle'
+        BINANCE = 'binance', 'Binance (USDT)'
         OTRO = 'otro', 'Otro'
 
     class Canal(models.TextChoices):

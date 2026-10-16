@@ -265,25 +265,31 @@ class PaginaVender(Pagina):
     def _celda_cantidad(self, linea):
         celda = QWidget()
         capa = QHBoxLayout(celda)
-        capa.setContentsMargins(0, 6, 0, 6)
-        capa.setSpacing(2)
+        capa.setContentsMargins(0, 0, 0, 0)
+        capa.setSpacing(4)
         cantidad = QSpinBox()
         cantidad.setButtonSymbols(QSpinBox.NoButtons)
         cantidad.setProperty('sinBotones', True)
         cantidad.setAlignment(Qt.AlignCenter)
-        cantidad.setFixedWidth(40)
+        cantidad.setFixedSize(38, 28)
         cantidad.setRange(1, max(1, linea['producto']['stock']))
         cantidad.setValue(linea['cantidad'])
         cantidad.valueChanged.connect(lambda v, l=linea: self._cambiar_cantidad(l, v))
+        # − [n] + del mismo tamaño y centrados en la celda
+        capa.addStretch()
         for icono, paso in (('menos', -1), ('mas', 1)):
             b = QToolButton()
             b.setIcon(tema.icono(icono, tema.CELESTE_OSCURO, 14))
+            b.setIconSize(QSize(14, 14))
+            b.setFixedSize(24, 24)
             b.setAutoRaise(True)
             b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip('Quitar uno' if paso < 0 else 'Añadir uno')
             b.clicked.connect(lambda _=False, c=cantidad, d=paso: c.setValue(c.value() + d))
-            capa.addWidget(b)
+            capa.addWidget(b, 0, Qt.AlignVCenter)
             if paso < 0:
-                capa.addWidget(cantidad)
+                capa.addWidget(cantidad, 0, Qt.AlignVCenter)
+        capa.addStretch()
         return celda
 
     def _pintar_total(self):

@@ -100,7 +100,8 @@ QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: %(CELESTE_CLARO)s; }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(%(FLECHA_ARRIBA)s); width: 10px; height: 10px; }
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(%(FLECHA_ABAJO)s); width: 10px; height: 10px; }
-QSpinBox[sinBotones="true"] { padding-right: 6px; }
+QSpinBox[sinBotones="true"] { padding: 2px; }
+QSpinBox[sinBotones="true"]::up-button, QSpinBox[sinBotones="true"]::down-button { width: 0; border: none; }
 
 /* Tablas */
 QTableView {

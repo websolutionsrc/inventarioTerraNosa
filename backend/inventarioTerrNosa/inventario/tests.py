@@ -64,6 +64,14 @@ class VentaTests(BaseAPI):
         self.assertEqual(venta.total, Decimal('69.00'))
         self.assertEqual(venta.lineas.get(producto=self.morral).precio_unitario, Decimal('25.50'))
 
+    def test_pago_con_binance(self):
+        self.como(self.encargado)
+        metodos = [m['id'] for m in self.client.get('/api/config/').data['metodos_pago']]
+        self.assertIn('binance', metodos)
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='binance')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['metodo_pago_nombre'], 'Binance (USDT)')
+
     def test_el_cliente_no_puede_poner_el_precio(self):
         self.como(self.encargado)
         r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.morral.id, 'cantidad': 1,
