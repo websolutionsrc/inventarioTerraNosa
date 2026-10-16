@@ -20,7 +20,7 @@ def numero(valor, decimales=2):
 
 
 def dinero(valor):
-    return '$ ' + numero(valor)
+    return numero(valor) + ' $'
 
 
 def bolivares(valor):

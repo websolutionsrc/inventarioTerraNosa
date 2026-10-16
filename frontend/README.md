@@ -46,7 +46,7 @@ terranosa/
   config.py             config.ini (dirección del servidor, último usuario)
   tema.py               colores de la marca, hoja de estilos e iconos SVG
   widgets.py            tablas, tarjetas, botones y diálogos de confirmación
-  formato.py            importes ($ 1.234,50) y fechas en español
+  formato.py            importes (1.234,50 $) y fechas en español
   vistas/               login, ventana principal y una pantalla por archivo
 recursos/               logos, icono y fuente Marcellus (los mismos de la web)
 ```

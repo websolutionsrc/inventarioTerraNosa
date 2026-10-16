@@ -165,7 +165,7 @@ class DialogoProducto(Dialogo):
         self.precio = QDoubleSpinBox()
         self.precio.setRange(0, 999999)
         self.precio.setDecimals(2)
-        self.precio.setPrefix('$ ')
+        self.precio.setSuffix(' $')
         self.precio.setValue(float(formato.decimal(p.get('precio', 0))))
         self.minimo = QSpinBox()
         self.minimo.setRange(0, 99999)
