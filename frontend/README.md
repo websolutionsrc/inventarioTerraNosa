@@ -57,5 +57,46 @@ recursos/               logos, icono y fuente Marcellus (los mismos de la web)
   (Windows 7 no los muestra bien).
 - «Cerrar sesión» solo olvida la sesión en este PC: el token es el mismo para todos los PC en
   los que entra un usuario, y anularlo echaría a los demás.
-- Las compilaciones a `.exe` para Windows 7 y Windows 11 son la fase 3
-  (`requirements-win7.txt` y `requirements-win11.txt`).
+
+## Compilar los .exe
+
+`construir.py` compila con PyInstaller (receta en `terranosa.spec`) y deja en `dist/` un
+`.zip` con la carpeta `TerraNosa` (`TerraNosa.exe`, `LEEME.txt` y `config.ini.ejemplo`), listo para
+copiarlo al PC de la tienda. Se usa una carpeta en vez de un solo `.exe` porque arranca más
+rápido en ordenadores antiguos.
+
+| Versión | Python | PyInstaller | Resultado |
+|---|---|---|---|
+| Windows 10/11 (64 bits) | 3.13 (`.venv`) | 6.x | `TerraNosa-<versión>-win11-64bits.zip` (~22 MB) |
+| Windows 7 (32 bits) | 3.8.10 portátil (`.venv-win7`) | 5.13.2 | `TerraNosa-<versión>-win7-32bits.zip` (~15 MB) |
+
+**Windows 11:**
+
+```
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python construir.py win11
+```
+
+**Windows 7.** La primera vez, prepara el Python 3.8.10 portátil de 32 bits (el paquete oficial
+`pythonx86` de nuget.org; no instala nada en Windows):
+
+```
+curl -L -o python38.nupkg https://www.nuget.org/api/v2/package/pythonx86/3.8.10
+mkdir .python38-32
+tar -xf python38.nupkg -C .python38-32
+.python38-32\tools\python.exe -m venv .venv-win7
+.venv-win7\Scripts\python -m pip install -r requirements-win7.txt
+```
+
+Después, cada vez que quieras compilar:
+
+```
+.venv-win7\Scripts\python construir.py win7
+```
+
+En el PC con Windows 7 hacen falta el **Service Pack 1** y la actualización **KB2999226**
+(Universal C Runtime), que casi siempre ya vienen con Windows Update. Si al abrir sale un error
+sobre `api-ms-win-crt-runtime-l1-1-0.dll`, hay que instalar esa actualización.
+
+La receta deja fuera las partes de Qt que la app no usa (OpenGL por software, Qt Quick/QML,
+red de Qt y traducciones a otros idiomas).

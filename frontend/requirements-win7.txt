@@ -1,6 +1,7 @@
-# Windows 7 · Python 3.8.10 (el último Python que se instala en Windows 7)
-# Versiones fijadas a las últimas que soportan Python 3.8; se verificarán al compilar (fase 3).
+# Entorno para compilar la versión de Windows 7 (32 bits) con Python 3.8.10 portátil.
+# Últimas versiones que funcionan con Python 3.8 y Windows 7; probadas el 16/10/2026.
 PyQt5==5.15.11
 PyQt5-Qt5==5.15.2
 requests==2.32.4
 urllib3==2.2.3
+pyinstaller==5.13.2

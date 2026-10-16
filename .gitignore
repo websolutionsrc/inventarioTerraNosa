@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 venv*/
+.venv*/
 
 # Builds de PyInstaller
 build/
@@ -12,3 +13,6 @@ dist/
 # Backend local
 db.sqlite3
 .env
+
+# Python portátil para compilar la versión de Windows 7
+.python38-32/
