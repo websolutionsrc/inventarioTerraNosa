@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio, Usuario, Venta
+from .models import CambioPrecio, CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio, Usuario, Venta
 
 
 @admin.register(Usuario)
@@ -86,6 +86,21 @@ class CompraAdmin(admin.ModelAdmin):
                     'anulada')
     list_filter = ('pagada', 'anulada', 'forma_pago')
     inlines = [LoteCompraInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CambioPrecio)
+class CambioPrecioAdmin(admin.ModelAdmin):
+    list_display = ('fecha', 'producto', 'precio_anterior', 'precio_nuevo', 'usuario', 'motivo')
+    search_fields = ('producto__nombre', 'motivo')
 
     def has_add_permission(self, request):
         return False

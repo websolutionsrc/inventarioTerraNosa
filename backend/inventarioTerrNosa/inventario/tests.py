@@ -668,3 +668,50 @@ class CompraTests(BaseAPI):
 def services_sumar_meses(fecha, meses):
     from .services import sumar_meses
     return sumar_meses(fecha, meses)
+
+
+class HistorialPreciosTests(BaseAPI):
+    def setUp(self):
+        super().setUp()
+        self.como(self.admin)
+
+    def historial(self, producto_id):
+        r = self.client.get('/api/productos/{}/precios/'.format(producto_id))
+        self.assertEqual(r.status_code, 200)
+        return [(h['precio_anterior'], h['precio_nuevo'], h['motivo'], h['usuario']) for h in r.data]
+
+    def test_alta_y_edicion_con_motivo(self):
+        r = self.client.post('/api/productos/', {'nombre': 'Lonchera', 'precio': '9.99'})
+        pid = r.data['id']
+        self.client.patch('/api/productos/{}/'.format(pid), {'precio': '11.50', 'motivo_precio': 'Subió el costo'})
+        self.client.patch('/api/productos/{}/'.format(pid), {'nombre': 'Lonchera térmica'})  # sin cambio de precio
+        self.client.patch('/api/productos/{}/'.format(pid), {'precio': '12.00'})
+        self.assertEqual(self.historial(pid), [
+            ('11.50', '12.00', 'Edición del artículo', 'admin'),
+            ('9.99', '11.50', 'Subió el costo', 'admin'),
+            (None, '9.99', 'Alta del artículo', 'admin'),
+        ])
+
+    def test_cambios_desde_una_compra(self):
+        r = self.client.post('/api/compras/', {'plazo_meses': 2, 'lineas': [
+            {'producto': self.morral.id, 'cantidad': 1, 'costo_unitario': '10', 'precio_venta': '27.00'},
+            {'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '6', 'precio_venta': '18.00'},
+            {'nuevo_nombre': 'Cartera nueva', 'cantidad': 2, 'costo_unitario': '5', 'precio_venta': '14.00'}]},
+            format='json')
+        compra = r.data['id']
+        self.assertEqual(self.historial(self.morral.id), [('25.50', '27.00', 'Compra #{}'.format(compra), 'admin')])
+        self.assertEqual(self.historial(self.bolso.id), [])  # el precio no cambió
+        nuevo = Producto.objects.get(nombre='Cartera nueva')
+        self.assertEqual(self.historial(nuevo.id), [(None, '14.00', 'Alta en la compra #{}'.format(compra), 'admin')])
+
+    def test_las_ventas_conservan_su_precio(self):
+        self.como(self.encargado)
+        venta = self.vender([{'producto': self.morral.id, 'cantidad': 1}]).data
+        self.como(self.admin)
+        self.client.patch('/api/productos/{}/'.format(self.morral.id), {'precio': '30.00'})
+        self.assertEqual(self.client.get('/api/ventas/{}/'.format(venta['id'])).data['lineas'][0]['precio_unitario'],
+                         '25.50')
+
+    def test_solo_admin_ve_el_historial(self):
+        self.como(self.encargado)
+        self.assertEqual(self.client.get('/api/productos/{}/precios/'.format(self.morral.id)).status_code, 403)

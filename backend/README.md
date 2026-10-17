@@ -60,6 +60,7 @@ cd inventarioTerrNosa
 | `POST/PUT/PATCH productos/` | Admin | Crear (con `stock_inicial`) o editar. El stock no se edita aquí |
 | `DELETE productos/{id}/` | Admin | Desactiva el producto |
 | `POST productos/{id}/reactivar/` | Admin | Vuelve a activarlo |
+| `GET productos/{id}/precios/` | Admin | Historial del precio de venta: cuándo, de cuánto a cuánto, quién y por qué |
 | `POST productos/{id}/mover_stock/` | Admin | `{tipo: entrada\|ajuste, cantidad, motivo}` |
 | `GET movimientos/` | Admin | Registro de entradas y ajustes (`?producto=`, `?desde=`, `?hasta=`) |
 | `GET ventas/` | Autenticado | Encargado: las de hoy. Admin: `?fecha=` o `?desde=&hasta=`, `?estado=activas\|anuladas\|todas`, `?usuario=`, `?metodo_pago=`, `?canal=` |
@@ -83,6 +84,8 @@ cd inventarioTerrNosa
 - Cada artículo comprado es un **lote**. Las ventas salen **FIFO**: primero las unidades que ya
   había antes de registrar compras (sin costo conocido) y después el lote más antiguo. Anular una
   venta devuelve las unidades a su lote; un ajuste negativo también sale del lote.
+- **Historial de precios** (`CambioPrecio`): cada cambio del precio de venta queda anotado (alta, edición con
+  motivo opcional `motivo_precio`, o desde una compra). Las ventas guardan siempre el precio al que se vendieron.
 - Cada venta guarda la **tasa USDT del día** (referencia para medir la pérdida por brecha).
 - El plan completo del análisis de rentabilidad está en `../docs/PLAN.md`.
 

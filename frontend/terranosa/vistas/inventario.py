@@ -7,7 +7,7 @@ from ..tareas import ejecutar
 from ..widgets import Columna, Tabla, boton, confirmar, etiqueta
 from .base import Pagina
 from .compras import abrir_nueva_compra
-from .dialogos import DialogoMovimientos, DialogoProducto, DialogoStock
+from .dialogos import DialogoHistorialArticulo, DialogoProducto, DialogoStock
 
 
 def _fondo(p):
@@ -79,7 +79,7 @@ class PaginaInventario(Pagina):
         self.b_editar = boton('Editar', 'editar')
         self.b_entrada = boton('Nueva compra', 'entrada')
         self.b_ajuste = boton('Ajustar stock', 'ajuste')
-        self.b_movimientos = boton('Entradas y ajustes', 'lista')
+        self.b_movimientos = boton('Historial', 'historial')
         self.b_estado = boton('Desactivar', 'quitar', tipo='peligro')
         self.b_editar.clicked.connect(self.editar)
         self.b_entrada.setToolTip('Registrar una compra de este artículo (suma el stock y crea un lote)')
@@ -176,7 +176,7 @@ class PaginaInventario(Pagina):
     def ver_movimientos(self):
         p = self.tabla.fila_seleccionada()
         if p:
-            DialogoMovimientos(self, self.api, p).exec_()
+            DialogoHistorialArticulo(self, self.api, p).exec_()
 
     def cambiar_estado(self):
         p = self.tabla.fila_seleccionada()

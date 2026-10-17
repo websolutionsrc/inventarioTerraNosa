@@ -1,7 +1,7 @@
 """Ventanas de diálogo: anular venta, producto, stock, movimientos y usuarios."""
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QButtonGroup, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLineEdit,
-                             QRadioButton, QSpinBox, QVBoxLayout)
+                             QRadioButton, QSpinBox, QTabWidget, QVBoxLayout)
 
 from .. import formato, tema
 from ..tareas import ejecutar
@@ -155,7 +155,7 @@ class DialogoAnular(Dialogo):
 class DialogoProducto(Dialogo):
     def __init__(self, parent, api, producto=None, tipos=(), proveedores=()):
         super(DialogoProducto, self).__init__(parent, 'Editar producto' if producto else 'Nuevo producto',
-                                              'Guardar cambios' if producto else 'Crear producto')
+                                              'Guardar cambios' if producto else 'Crear producto', ancho=520)
         self.api, self.producto = api, producto
         p = producto or {}
         self.nombre = QLineEdit(p.get('nombre', ''))
@@ -176,16 +176,31 @@ class DialogoProducto(Dialogo):
         f.addRow('Nombre *', self.nombre)
         f.addRow('Tipo', self.tipo)
         f.addRow('Proveedor', self.proveedor)
-        f.addRow('Precio', self.precio)
+        f.addRow('Precio de venta', self.precio)
+        self.motivo_precio = QLineEdit()
+        self.motivo_precio.setMaxLength(200)
+        self.motivo_precio.setPlaceholderText('Opcional: por qué cambia (queda en el historial de precios)')
+        self.fila_motivo = etiqueta('Motivo del cambio')
+        f.addRow(self.fila_motivo, self.motivo_precio)
+        self.fila_motivo.hide()
+        self.motivo_precio.hide()
+        if producto:
+            self.precio.valueChanged.connect(self._precio_cambiado)
         f.addRow('Avisar con stock ≤', self.minimo)
         if producto:
-            f.addRow('Stock', etiqueta('{}  (se cambia con «Entrada» o «Ajustar stock»)'.format(p['stock']),
-                                       'subtitulo'))
+            stock = etiqueta('{}  · cambia con una compra o un ajuste'.format(p['stock']), 'subtitulo')
+            stock.setToolTip('El stock se cambia con «Nueva compra» o «Ajustar stock» en Inventario')
+            f.addRow('Stock', stock)
         else:
             self.inicial = QSpinBox()
             self.inicial.setRange(0, 99999)
             f.addRow('Stock inicial', self.inicial)
         self.nombre.setFocus()
+
+    def _precio_cambiado(self, valor):
+        cambia = formato.decimal('{:.2f}'.format(valor)) != formato.decimal(self.producto['precio'])
+        self.fila_motivo.setVisible(cambia)
+        self.motivo_precio.setVisible(cambia)
 
     def _combo_editable(self, opciones, valor):
         c = QComboBox()
@@ -209,6 +224,8 @@ class DialogoProducto(Dialogo):
         api = self.api
         if self.producto:
             producto_id = self.producto['id']
+            if self.motivo_precio.isVisible() and self.motivo_precio.text().strip():
+                datos['motivo_precio'] = self.motivo_precio.text().strip()
             return lambda: api.editar_producto(producto_id, datos)
         datos['stock_inicial'] = self.inicial.value()
         return lambda: api.crear_producto(datos)
@@ -272,14 +289,27 @@ class DialogoStock(Dialogo):
         return lambda: api.mover_stock(pid, tipo, cambio, motivo)
 
 
-class DialogoMovimientos(Dialogo):
+class DialogoHistorialArticulo(Dialogo):
+    """Historial de un artículo: movimientos de stock y cambios del precio de venta."""
     TIPOS = {'inicial': 'Stock inicial', 'entrada': 'Entrada', 'ajuste': 'Ajuste'}
 
     def __init__(self, parent, api, producto):
-        super(DialogoMovimientos, self).__init__(parent, 'Entradas y ajustes · ' + producto['nombre'],
-                                                 'Cerrar', ancho=760)
+        super(DialogoHistorialArticulo, self).__init__(parent, 'Historial · ' + producto['nombre'], 'Cerrar',
+                                                       ancho=820)
         self.cancelar.hide()
-        self.setMinimumHeight(420)
+        self.setMinimumHeight(460)
+        pestanas = QTabWidget()
+        pestanas.setStyleSheet('QTabWidget::pane { border: none; } QTabBar::tab { padding: 8px 18px; }')
+        self.precios = Tabla([
+            Columna('Fecha', lambda c: formato.fecha_y_hora(c['fecha']), orden=lambda c: c['fecha']),
+            Columna('Antes', lambda c: formato.dinero(c['precio_anterior']) if c['precio_anterior'] else '—',
+                    alinear='der'),
+            Columna('Ahora', lambda c: formato.dinero(c['precio_nuevo']), alinear='der'),
+            Columna('Cambio', _cambio_precio, alinear='der', color=_color_cambio),
+            Columna('Quién', lambda c: c['usuario'] or '—'),
+            Columna('Motivo', lambda c: c['motivo'], estirar=True),
+        ], vacio='Sin cambios de precio registrados.', ordenable=False)
+        pestanas.addTab(self.precios, 'Precios')
         self.tabla = Tabla([
             Columna('Fecha', lambda m: formato.fecha_y_hora(m['fecha']), orden=lambda m: m['fecha'], ancho=170),
             Columna('Tipo', lambda m: self.TIPOS.get(m['tipo'], m['tipo'])),
@@ -289,12 +319,38 @@ class DialogoMovimientos(Dialogo):
                     alinear='der'),
             Columna('Usuario', lambda m: m['usuario']),
             Columna('Motivo / nota', lambda m: m['motivo'], estirar=True),
-        ], vacio='Este producto no tiene entradas ni ajustes registrados.\n'
-                 'Las ventas y anulaciones se ven en «Historial».')
-        self.cuerpo.addWidget(self.tabla)
-        self.tabla.poner_cargando()
-        ejecutar(lambda: api.movimientos(producto_id=producto['id']), al_terminar=self.tabla.poner_filas,
-                 al_fallar=lambda e: (self.tabla.dejar_de_cargar(), self.mostrar_error(e.mensaje)), widget=self)
+        ], vacio='Este artículo no tiene compras ni ajustes registrados.\n'
+                 'Las ventas y anulaciones se ven en la pantalla «Historial».')
+        pestanas.addTab(self.tabla, 'Stock')
+        self.cuerpo.addWidget(pestanas)
+        for t in (self.precios, self.tabla):
+            t.poner_cargando()
+        pid = producto['id']
+        ejecutar(lambda: (api.precios_producto(pid), api.movimientos(producto_id=pid)), al_terminar=self._cargado,
+                 al_fallar=self._fallo, widget=self)
+
+    def _cargado(self, datos):
+        precios, movimientos = datos
+        self.precios.poner_filas(precios)
+        self.tabla.poner_filas(movimientos)
+
+    def _fallo(self, error):
+        for t in (self.precios, self.tabla):
+            t.dejar_de_cargar()
+        self.mostrar_error(error.mensaje)
+
+
+def _cambio_precio(c):
+    if not c['precio_anterior']:
+        return 'Alta'
+    antes, ahora = formato.decimal(c['precio_anterior']), formato.decimal(c['precio_nuevo'])
+    return '{}{} %'.format('+' if ahora >= antes else '', formato.numero((ahora / antes - 1) * 100, 1))
+
+
+def _color_cambio(c):
+    if not c['precio_anterior']:
+        return tema.TEXTO_SUAVE
+    return tema.VERDE if formato.decimal(c['precio_nuevo']) >= formato.decimal(c['precio_anterior']) else tema.ROJO
 
 
 class DialogoUsuario(Dialogo):

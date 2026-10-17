@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from .models import (AsignacionLote, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio,
+from .models import (AsignacionLote, CambioPrecio, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio,
                      Venta)
 
 
@@ -40,6 +40,14 @@ def ultima_tasa_usdt():
     """Última tasa USDT guardada: lo que cuesta comprar un USDT en Binance P2P."""
     tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BINANCE).order_by('-obtenida_en').first()
     return tasa.compra if tasa else None
+
+
+def anotar_precio(producto, usuario, anterior, nuevo, motivo='', compra=None):
+    """Deja constancia de un cambio del precio de venta (o del precio con que se da de alta)."""
+    if anterior is not None and Decimal(anterior) == Decimal(nuevo):
+        return None
+    return CambioPrecio.objects.create(producto=producto, usuario=usuario, precio_anterior=anterior,
+                                       precio_nuevo=nuevo, motivo=(motivo or '')[:255], compra=compra)
 
 
 # --- Lotes (FIFO) ---------------------------------------------------------------------
@@ -208,6 +216,7 @@ def crear_producto(usuario, datos, stock_inicial=0):
     if stock_inicial < 0:
         raise ErrorNegocio("El stock inicial no puede ser negativo.")
     producto = Producto.objects.create(stock=stock_inicial, **datos)
+    anotar_precio(producto, usuario, None, producto.precio, 'Alta del artículo')
     if stock_inicial:
         EntradaInventario.objects.create(producto=producto, usuario_admin=usuario,
                                          tipo=EntradaInventario.Tipo.INICIAL, cantidad=stock_inicial,
@@ -380,6 +389,8 @@ def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, pro
         else:
             producto = Producto.objects.create(nombre=l['nuevo_nombre'].strip()[:255], proveedor=compra.proveedor,
                                                precio=Decimal(l['precio_venta']), stock=0)
+            anotar_precio(producto, usuario, None, producto.precio, 'Alta en la compra #{}'.format(compra.id),
+                          compra)
         cantidad = int(l['cantidad'])
         LoteCompra.objects.create(compra=compra, producto=producto, cantidad=cantidad, disponible=cantidad,
                                   costo_unitario=Decimal(l['costo_unitario']),
@@ -388,6 +399,8 @@ def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, pro
         producto.stock += cantidad
         campos = ['stock', 'actualizado']
         if l.get('precio_venta') is not None and Decimal(l['precio_venta']) != producto.precio:
+            anotar_precio(producto, usuario, producto.precio, Decimal(l['precio_venta']),
+                          'Compra #{}'.format(compra.id), compra)
             producto.precio = Decimal(l['precio_venta'])
             campos.append('precio')
         if not producto.activo:  # comprar un artículo desactivado lo vuelve a poner a la venta

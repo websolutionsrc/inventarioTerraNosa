@@ -297,3 +297,17 @@ class AsignacionLote(models.Model):
     movimiento = models.ForeignKey(EntradaInventario, on_delete=models.CASCADE, null=True, blank=True,
                                    related_name='asignaciones')
     cantidad = models.PositiveIntegerField()
+
+
+class CambioPrecio(models.Model):
+    """Historial del precio de venta de un artículo: cuándo, de cuánto a cuánto, quién y por qué."""
+    producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name='cambios_precio')
+    fecha = models.DateTimeField(auto_now_add=True)
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True)
+    precio_anterior = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # null = alta
+    precio_nuevo = models.DecimalField(max_digits=10, decimal_places=2)
+    motivo = models.CharField(max_length=255, blank=True, default='')
+    compra = models.ForeignKey('Compra', on_delete=models.SET_NULL, null=True, blank=True, related_name='cambios_precio')
+
+    class Meta:
+        ordering = ['-fecha', '-id']

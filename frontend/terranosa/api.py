@@ -136,6 +136,10 @@ class Api(object):
         return self._pedir('POST', 'productos/{}/mover_stock/'.format(producto_id),
                            {'tipo': tipo, 'cantidad': cantidad, 'motivo': motivo})
 
+    def precios_producto(self, producto_id):
+        """Historial de cambios del precio de venta de un artículo (admin)."""
+        return self._pedir('GET', 'productos/{}/precios/'.format(producto_id))
+
     def movimientos(self, producto_id=None, desde=None, hasta=None):
         params = {k: v for k, v in (('producto', producto_id), ('desde', desde), ('hasta', hasta)) if v}
         return self._pedir('GET', 'movimientos/', params=params)

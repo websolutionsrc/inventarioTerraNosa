@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import update_last_login
+from django.db import transaction
 from django.db.models import Count, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -16,7 +17,7 @@ from rest_framework.views import APIView
 
 from . import binance, services, tasas
 from .models import CobroBinance, Compra, EntradaInventario, Producto, Usuario, Venta
-from .serializers import (AnularVentaSerializer, CobroBinanceSerializer, CompraSerializer, MovimientoStockSerializer,
+from .serializers import (AnularVentaSerializer, CambioPrecioSerializer, CobroBinanceSerializer, CompraSerializer, MovimientoStockSerializer,
                           NuevaCompraSerializer, PagoCompraSerializer,
                           MoverStockSerializer, NuevoCobroBinanceSerializer,
                           NuevaVentaSerializer, ProductoSerializer, UsuarioSerializer, VentaSerializer)
@@ -131,15 +132,28 @@ class ProductoViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         datos = dict(serializer.validated_data)
         stock_inicial = datos.pop('stock_inicial', 0)
+        datos.pop('motivo_precio', None)
         try:
             producto = services.crear_producto(request.user, datos, stock_inicial)
         except services.ErrorNegocio as e:
             return _error(e)
         return Response(self.get_serializer(producto).data, status=status.HTTP_201_CREATED)
 
+    @transaction.atomic
     def perform_update(self, serializer):
         serializer.validated_data.pop('stock_inicial', None)
-        serializer.save()
+        motivo = serializer.validated_data.pop('motivo_precio', '') or 'Edición del artículo'
+        anterior = serializer.instance.precio
+        producto = serializer.save()
+        services.anotar_precio(producto, self.request.user, anterior, producto.precio, motivo)
+
+    @action(detail=True, methods=['get'])
+    def precios(self, request, pk=None):
+        """Historial de cambios del precio de venta (solo admin)."""
+        if not request.user.is_staff:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        producto = get_object_or_404(Producto, pk=pk)
+        return Response(CambioPrecioSerializer(producto.cambios_precio.select_related('usuario'), many=True).data)
 
     def destroy(self, request, *args, **kwargs):
         """No se borra: se desactiva para conservar ventas y movimientos."""

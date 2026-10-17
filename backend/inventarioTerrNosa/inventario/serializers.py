@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, Usuario, Venta
+from .models import CambioPrecio, CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, Usuario, Venta
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -40,12 +40,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
 class ProductoSerializer(serializers.ModelSerializer):
     # El stock solo se fija al crear; después cambia con ventas, entradas o ajustes.
     stock_inicial = serializers.IntegerField(write_only=True, required=False, min_value=0)
+    motivo_precio = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=255)
     stock_bajo = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
         fields = ['id', 'nombre', 'tipo', 'proveedor', 'precio', 'stock', 'stock_minimo', 'stock_bajo',
-                  'activo', 'stock_inicial', 'creado', 'actualizado']
+                  'activo', 'stock_inicial', 'motivo_precio', 'creado', 'actualizado']
         read_only_fields = ['stock', 'activo', 'creado', 'actualizado']
 
     def get_stock_bajo(self, obj):
@@ -245,3 +246,11 @@ class NuevaCompraSerializer(serializers.Serializer):
     notas = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
     lineas = NuevaLineaCompraSerializer(many=True, allow_empty=False)
     pago = PagoCompraSerializer(required=False)
+
+
+class CambioPrecioSerializer(serializers.ModelSerializer):
+    usuario = serializers.CharField(source='usuario.username', read_only=True, default=None)
+
+    class Meta:
+        model = CambioPrecio
+        fields = ['id', 'fecha', 'usuario', 'precio_anterior', 'precio_nuevo', 'motivo', 'compra']
