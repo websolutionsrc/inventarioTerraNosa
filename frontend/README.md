@@ -68,6 +68,10 @@ recursos/               logos, icono y fuente Marcellus (los mismos de la web)
 copiarlo al PC de la tienda. Se usa una carpeta en vez de un solo `.exe` porque arranca más
 rápido en ordenadores antiguos.
 
+La versión (hoy **2.1.0**) está en `terranosa/__init__.py`: sale en el login, en las propiedades del
+`.exe` y en el nombre del `.zip`. La del servidor, en `VERSION_API` (`inventario/views.py`) y
+`backend/version.txt`. Lo que cambia en cada versión, en `../docs/CAMBIOS.md`.
+
 | Versión | Python | PyInstaller | Resultado |
 |---|---|---|---|
 | Windows 10/11 (64 bits) | 3.13 (`.venv`) | 6.x | `TerraNosa-<versión>-win11-64bits.zip` (~22 MB) |

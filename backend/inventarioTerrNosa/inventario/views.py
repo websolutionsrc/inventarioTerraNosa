@@ -22,7 +22,7 @@ from .serializers import (AnularVentaSerializer, CambioPrecioSerializer, CobroBi
                           MoverStockSerializer, NuevoCobroBinanceSerializer,
                           NuevaVentaSerializer, ProductoSerializer, UsuarioSerializer, VentaSerializer)
 
-VERSION_API = '2.0.0'
+VERSION_API = '2.1.0'
 
 
 class SoloAdmin(permissions.BasePermission):
