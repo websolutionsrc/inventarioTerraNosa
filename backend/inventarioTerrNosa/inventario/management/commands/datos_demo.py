@@ -16,8 +16,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from inventario import services
-from inventario.models import (CobroBinance, Compra, EntradaInventario, IngresoBinanceSimulado, LoteCompra, Producto,
-                               SalidaInventario, TasaCambio, Usuario, Venta)
+from inventario.models import (AjustesNegocio, CobroBinance, Compra, EntradaInventario, IngresoBinanceSimulado,
+                               LoteCompra, Producto, SalidaInventario, TasaCambio, Usuario, Venta)
 
 USUARIOS = [('admin', 'admin-terranosa', True), ('encargado', 'encargado-terranosa', False)]
 
@@ -60,6 +60,7 @@ class Command(BaseCommand):
             LoteCompra.objects.all().delete()
             Compra.objects.all().delete()
             Producto.objects.all().delete()
+            AjustesNegocio.objects.all().delete()  # el PIN de gerencia se vuelve a crear desde la app
         elif Producto.objects.exists():
             raise CommandError('Ya hay productos. Usa --borrar para empezar de cero.')
 
