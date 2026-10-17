@@ -5,6 +5,8 @@ Los métodos devuelven el JSON ya convertido o lanzan ErrorApi con un mensaje en
 español que se puede mostrar tal cual. Se llaman desde tareas en segundo plano
 (ver tareas.py), nunca directamente desde la interfaz.
 """
+import time
+
 import requests
 
 TIMEOUT = (6, 25)  # (conectar, leer) en segundos
@@ -55,6 +57,8 @@ class Api(object):
         self.token = None
         self.usuario = None  # {"id", "username", "is_staff"}
         self.opciones = None  # respuesta de /config/
+        self.pin_token = None  # acceso al panel de rentabilidad (caduca)
+        self.pin_caduca = 0
         self._sesion = requests.Session()
         self._sesion.headers.update({'Accept': 'application/json'})
 
@@ -69,6 +73,8 @@ class Api(object):
         cabeceras = {}
         if self.token:
             cabeceras['Authorization'] = 'Token ' + self.token
+        if self.pin_token and ruta.startswith('rentabilidad/'):
+            cabeceras['X-Pin-Gerencia'] = self.pin_token
         try:
             r = self._sesion.request(metodo, self._url(ruta), json=datos, params=params,
                                      headers=cabeceras, timeout=TIMEOUT)
@@ -106,6 +112,7 @@ class Api(object):
         """
         self.token = None
         self.usuario = None
+        self.bloquear_panel()
 
     def config(self):
         self.opciones = self._pedir('GET', 'config/')
@@ -180,6 +187,41 @@ class Api(object):
     def previsiones_compra(self):
         """Tasas de hoy, ritmo de subida, % cobrado en dólares, pendiente de pagar y proveedores."""
         return self._pedir('GET', 'compras/previsiones/')
+
+    # --- Panel de rentabilidad (admin + PIN de gerencia) ---
+
+    @property
+    def panel_abierto(self):
+        return bool(self.pin_token) and time.time() < self.pin_caduca
+
+    def bloquear_panel(self):
+        self.pin_token = None
+        self.pin_caduca = 0
+
+    def estado_pin(self):
+        return self._pedir('GET', 'rentabilidad/pin/')
+
+    def _abrir_panel(self, datos):
+        r = self._pedir('POST', 'rentabilidad/pin/', datos)
+        self.pin_token = r['token']
+        self.pin_caduca = time.time() + int(r.get('minutos', 15)) * 60 - 10
+        return r
+
+    def entrar_panel(self, pin):
+        return self._abrir_panel({'pin': pin})
+
+    def definir_pin(self, nuevo, actual=None):
+        datos = {'pin_nuevo': nuevo}
+        if actual:
+            datos['pin_actual'] = actual
+        return self._abrir_panel(datos)
+
+    def rentabilidad(self, que, **params):
+        """que: resumen | lotes | lotes/<id> | articulos. params: escenario, tasa, desde, hasta, estado."""
+        return self._pedir('GET', 'rentabilidad/{}/'.format(que), params={k: v for k, v in params.items() if v})
+
+    def guardar_margen_objetivo(self, margen):
+        return self._pedir('PATCH', 'rentabilidad/ajustes/', {'margen_objetivo': margen})
 
     # --- Cobros con Binance (verificados por el servidor) ---
 

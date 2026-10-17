@@ -38,7 +38,11 @@ poner precios.
   cargarlo como compra de *Inventario inicial*.
 - Cada venta guarda la **tasa USDT del día** (referencia de la brecha).
 
-## Fase 2 · Panel de rentabilidad (con PIN)
+## Fase 2 · Panel de rentabilidad (con PIN) ✅ (hecha el 17/10/2026)
+
+Hecho como se describe abajo, con estas diferencias: el resultado de un lote vendido y pagado
+entero se calcula al vuelo (no se guarda aparte) y en el detalle venta por venta se marcan en
+ámbar o rojo las ventas por debajo del margen objetivo.
 
 - **PIN de gerencia** aparte de la contraseña; caduca a los 15 minutos; solo administradores.
 - **Vista general**: "de cada 100 $ vendidos te quedaron X $", ganancia real del mes, pendiente de

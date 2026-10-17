@@ -153,6 +153,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/min',
+        'pin': '6/min',
     },
     'COERCE_DECIMAL_TO_STRING': True,
 }

@@ -311,3 +311,14 @@ class CambioPrecio(models.Model):
 
     class Meta:
         ordering = ['-fecha', '-id']
+
+
+class AjustesNegocio(models.Model):
+    """Ajustes únicos del negocio (una sola fila): PIN de gerencia y margen objetivo."""
+    pin_hash = models.CharField(max_length=128, blank=True, default='')
+    margen_objetivo = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('40'))
+    actualizado = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def actuales(cls):
+        return cls.objects.get_or_create(pk=1)[0]

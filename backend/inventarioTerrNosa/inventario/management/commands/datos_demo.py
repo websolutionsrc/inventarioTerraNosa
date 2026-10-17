@@ -24,9 +24,9 @@ USUARIOS = [('admin', 'admin-terranosa', True), ('encargado', 'encargado-terrano
 # nombre, tipo, proveedor, precio USD, stock, stock mínimo
 PRODUCTOS = [
     ('Morral Nike impermeable', 'Morrales', 'Nike', '25.00', 12, 3),
-    ('Morral táctico 55L', 'Morrales', 'Genérico', '38.00', 6, 2),
+    ('Morral táctico 55L', 'Morrales', 'Genérico', '38.00', 0, 2),
     ('Morral montañero 75L', 'Morrales', 'Genérico', '45.00', 4, 2),
-    ('Morral juvenil estampado', 'Morrales', 'Totto', '18.50', 15, 4),
+    ('Morral juvenil estampado', 'Morrales', 'Totto', '18.50', 0, 4),
     ('Morral de malla transparente', 'Morrales', 'Genérico', '12.00', 8, 2),
     ('Bolso cruzado de caballero', 'Caballero', 'Genérico', '16.00', 7, 2),
     ('Billetera de cuero caballero', 'Billeteras', 'Artesanal', '14.00', 20, 5),
@@ -36,7 +36,7 @@ PRODUCTOS = [
     ('Maleta de viaje 20"', 'Viaje', 'Samsonite', '65.00', 3, 1),
     ('Bolso de viaje con ruedas', 'Viaje', 'Genérico', '42.00', 1, 1),
     ('Maletín ejecutivo', 'Maletines', 'Genérico', '35.00', 5, 2),
-    ('Cartuchera escolar', 'Cartucheras', 'Totto', '6.00', 25, 5),
+    ('Cartuchera escolar', 'Cartucheras', 'Totto', '6.00', 0, 5),
     ('Paraguas plegable', 'Accesorios', 'Genérico', '8.00', 0, 2),
 ]
 
@@ -113,6 +113,13 @@ class Command(BaseCommand):
         services.anular_venta(mal.id, encargado, 'Se cobró el morral equivocado')
         services.registrar_venta(encargado, [{'producto': p[2], 'cantidad': 1}], 'transferencia', 'whatsapp')
         services.mover_stock(p[4], admin, EntradaInventario.Tipo.AJUSTE, -1, 'Llegó con el cierre roto')
+
+        # Más ventas de los artículos comprados, cobradas a distintas tasas (para el panel de rentabilidad)
+        for dias, tasa, metodo in ((15, '890', 'pago_movil'), (12, '905', 'punto'), (9, None, 'efectivo_usd'),
+                                   (6, '925', 'pago_movil'), (3, None, 'binance')):
+            v = services.registrar_venta(encargado, [{'producto': p[1], 'cantidad': 1}, {'producto': p[3], 'cantidad': 1}],
+                                         metodo, 'tienda', tasa=Decimal(tasa) if tasa else None)
+            Venta.objects.filter(pk=v.pk).update(fecha=timezone.now() - timedelta(days=dias))
 
         self.stdout.write(self.style.SUCCESS(
             f'Listo: {len(productos)} productos, {Compra.objects.count()} compras, {Venta.objects.count()} ventas '

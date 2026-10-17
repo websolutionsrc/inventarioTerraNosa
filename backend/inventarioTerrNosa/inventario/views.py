@@ -15,8 +15,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import binance, services, tasas
-from .models import CobroBinance, Compra, EntradaInventario, Producto, Usuario, Venta
+from . import binance, rentabilidad, services, tasas
+from .models import AjustesNegocio, CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, Usuario, Venta
 from .serializers import (AnularVentaSerializer, CambioPrecioSerializer, CobroBinanceSerializer, CompraSerializer, MovimientoStockSerializer,
                           NuevaCompraSerializer, PagoCompraSerializer,
                           MoverStockSerializer, NuevoCobroBinanceSerializer,
@@ -434,3 +434,130 @@ class CompraViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cre
         datos['proximo_vencimiento'] = CompraSerializer(proxima).data if proxima else None
         datos['proveedores'] = sorted({p for p in Compra.objects.values_list('proveedor', flat=True) if p})
         return Response({k: (str(v) if isinstance(v, Decimal) else v) for k, v in datos.items()})
+
+
+# --- Panel de rentabilidad (admin + PIN de gerencia) ------------------------------------
+
+PIN_MINUTOS = 15
+CABECERA_PIN = 'HTTP_X_PIN_GERENCIA'
+
+
+def _token_pin(usuario):
+    from django.core import signing
+    return signing.dumps({'u': usuario.id}, salt='rentabilidad')
+
+
+def _pin_valido(request):
+    from django.core import signing
+    token = request.META.get(CABECERA_PIN, '')
+    try:
+        datos = signing.loads(token, salt='rentabilidad', max_age=PIN_MINUTOS * 60)
+    except signing.BadSignature:
+        return False
+    return datos.get('u') == request.user.id
+
+
+class ConPinDeGerencia(permissions.BasePermission):
+    message = 'Introduce el PIN de gerencia (caduca a los {} minutos).'.format(PIN_MINUTOS)
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_staff and _pin_valido(request))
+
+
+class PinView(APIView):
+    """
+    GET: si ya hay PIN definido. POST {pin}: entra y devuelve un token de 15 minutos.
+    POST {pin_nuevo, pin_actual?}: define o cambia el PIN (pin_actual obligatorio para cambiarlo).
+    """
+    permission_classes = [SoloAdmin]
+    throttle_scope = 'pin'
+
+    def get_throttles(self):
+        # Solo cuentan los intentos de entrar o cambiar el PIN
+        return super(PinView, self).get_throttles() if self.request.method == 'POST' else []
+
+    def get(self, request):
+        return Response({'definido': bool(AjustesNegocio.actuales().pin_hash), 'minutos': PIN_MINUTOS})
+
+    def post(self, request):
+        from django.contrib.auth.hashers import check_password, make_password
+        ajustes = AjustesNegocio.actuales()
+        nuevo = (request.data.get('pin_nuevo') or '').strip()
+        if nuevo:
+            if not nuevo.isdigit() or not 4 <= len(nuevo) <= 8:
+                return _error('El PIN debe tener entre 4 y 8 números.')
+            if ajustes.pin_hash and not check_password(request.data.get('pin_actual') or '', ajustes.pin_hash):
+                return _error('El PIN actual no es correcto.')
+            ajustes.pin_hash = make_password(nuevo)
+            ajustes.save(update_fields=['pin_hash', 'actualizado'])
+            return Response({'token': _token_pin(request.user), 'minutos': PIN_MINUTOS})
+        if not ajustes.pin_hash:
+            return _error('Aún no hay PIN de gerencia: defínelo primero.')
+        if not check_password(request.data.get('pin') or '', ajustes.pin_hash):
+            return _error('PIN incorrecto.')
+        return Response({'token': _token_pin(request.user), 'minutos': PIN_MINUTOS})
+
+
+def _como_texto(dato):
+    """Decimales y fechas como texto, igual que en el resto de la API."""
+    from datetime import date as _date, datetime as _datetime
+    if isinstance(dato, dict):
+        return {k: _como_texto(v) for k, v in dato.items()}
+    if isinstance(dato, (list, tuple)):
+        return [_como_texto(v) for v in dato]
+    if isinstance(dato, Decimal):
+        return str(dato)
+    if isinstance(dato, _datetime):
+        return timezone.localtime(dato).isoformat()
+    if isinstance(dato, _date):
+        return dato.isoformat()
+    return dato
+
+
+class RentabilidadViewSet(viewsets.ViewSet):
+    """
+    Panel de rentabilidad. Todas las consultas aceptan ?escenario=factura|usdt|bcv|otra&tasa=…
+    para estimar las compras pendientes de pagar "si se pagasen hoy".
+    """
+    permission_classes = [ConPinDeGerencia]
+
+    def _ctx(self, request):
+        p = request.query_params
+        try:
+            return rentabilidad.Contexto(p.get('escenario', 'factura'), p.get('tasa') or None)
+        except Exception:
+            raise ValidationError({'tasa': 'Tasa no válida.'})
+
+    @action(detail=False, methods=['get'])
+    def resumen(self, request):
+        p = request.query_params
+        hoy = timezone.localdate()
+        desde = _fecha(p['desde'], 'desde') if p.get('desde') else hoy.replace(day=1)
+        hasta = _fecha(p['hasta'], 'hasta') if p.get('hasta') else hoy
+        return Response(_como_texto(rentabilidad.resumen(self._ctx(request), desde, hasta)))
+
+    @action(detail=False, methods=['get'])
+    def lotes(self, request):
+        return Response(_como_texto(rentabilidad.lotes(self._ctx(request), request.query_params.get('estado'))))
+
+    @action(detail=False, methods=['get'], url_path=r'lotes/(?P<lote_id>\d+)')
+    def lote(self, request, lote_id=None):
+        lote = get_object_or_404(LoteCompra.objects.select_related('compra', 'producto'), pk=lote_id)
+        return Response(_como_texto(rentabilidad.analizar_lote(lote, self._ctx(request))))
+
+    @action(detail=False, methods=['get'])
+    def articulos(self, request):
+        return Response(_como_texto(rentabilidad.articulos(self._ctx(request))))
+
+    @action(detail=False, methods=['patch'])
+    def ajustes(self, request):
+        ajustes = AjustesNegocio.actuales()
+        try:
+            margen = Decimal(str(request.data.get('margen_objetivo')))
+        except Exception:
+            return _error('Margen objetivo no válido.')
+        if not 0 < margen < 100:
+            return _error('El margen objetivo debe estar entre 0 y 100 %.')
+        ajustes.margen_objetivo = margen
+        ajustes.save(update_fields=['margen_objetivo', 'actualizado'])
+        return Response({'margen_objetivo': str(ajustes.margen_objetivo)})

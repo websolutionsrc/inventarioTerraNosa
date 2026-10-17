@@ -715,3 +715,114 @@ class HistorialPreciosTests(BaseAPI):
     def test_solo_admin_ve_el_historial(self):
         self.como(self.encargado)
         self.assertEqual(self.client.get('/api/productos/{}/precios/'.format(self.morral.id)).status_code, 403)
+
+
+class RentabilidadTests(BaseAPI):
+    """El ejemplo del diseño: 10 morrales a 10 $, a pagar en 3 meses en Bs a tasa USDT, vendidos a 25 $."""
+
+    def setUp(self):
+        super().setUp()
+        from django.core.cache import cache
+        cache.clear()  # límites de intentos del PIN
+        from .models import TasaCambio
+        TasaCambio.objects.create(fuente='bcv', fecha_valor=timezone.localdate(), compra=Decimal('880'),
+                                  venta=Decimal('880'))
+        TasaCambio.objects.create(fuente='binance', fecha_valor=timezone.localdate(), compra=Decimal('1000'),
+                                  venta=Decimal('995'))
+        self.mochila = Producto.objects.create(nombre='Morral táctico', precio=Decimal('25.00'), stock=0)
+        self.como(self.admin)
+        r = self.client.post('/api/compras/', {'plazo_meses': 3, 'forma_pago': 'bs_usdt', 'lineas': [
+            {'producto': self.mochila.id, 'cantidad': 10, 'costo_unitario': '10.00'}]}, format='json')
+        self.compra = r.data['id']
+        self.lote = r.data['lotes'][0]['id']
+
+    def entrar(self, pin='2468'):
+        self.como(self.admin)
+        self.client.post('/api/rentabilidad/pin/', {'pin_nuevo': pin}, format='json')
+        r = self.client.post('/api/rentabilidad/pin/', {'pin': pin}, format='json')
+        self.client.credentials(HTTP_X_PIN_GERENCIA=r.data['token'])
+
+    def vender_en_bs(self, tasa, metodo='pago_movil'):
+        self.como(self.encargado)
+        r = self.client.post('/api/ventas/', {'lineas': [{'producto': self.mochila.id, 'cantidad': 1}],
+                                              'metodo_pago': metodo, 'tasa': tasa}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def test_sin_pin_no_se_ve_nada(self):
+        self.assertEqual(self.client.get('/api/rentabilidad/resumen/').status_code, 403)
+        self.assertFalse(self.client.get('/api/rentabilidad/pin/').data['definido'])
+        self.assertEqual(self.client.post('/api/rentabilidad/pin/', {'pin_nuevo': '12'}, format='json').status_code,
+                         400)  # muy corto
+        self.entrar()
+        self.assertEqual(self.client.get('/api/rentabilidad/resumen/').status_code, 200)
+        self.client.credentials()
+        self.assertEqual(self.client.post('/api/rentabilidad/pin/', {'pin': '0000'}, format='json').status_code, 400)
+        # Cambiar el PIN exige el actual
+        r = self.client.post('/api/rentabilidad/pin/', {'pin_nuevo': '1357', 'pin_actual': '9999'}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.como(self.encargado)
+        self.assertEqual(self.client.get('/api/rentabilidad/pin/').status_code, 403)
+
+    def test_lote_pagado_tasa_media_de_venta_frente_a_tasa_de_pago(self):
+        self.vender_en_bs('880')
+        self.vender_en_bs('900')
+        self.como(self.encargado)
+        self.vender([{'producto': self.mochila.id, 'cantidad': 1}], metodo='efectivo_usd')
+        self.como(self.admin)
+        self.client.post('/api/compras/{}/pagar/'.format(self.compra), {'tasa_pago': '1130', 'tasa_usdt': '1130'},
+                         format='json')
+        self.entrar()
+        r = self.client.get('/api/rentabilidad/lotes/{}/'.format(self.lote)).data
+        self.assertEqual((r['estado'], r['vendidas'], r['quedan'], r['tasa_pago']), ('pagado', 3, 7, '1130.00'))
+        self.assertEqual(r['margen_estimado'], '60.0')
+        # 1 − 11.300/22.000 = 48,6 %; 1 − 11.300/22.500 = 49,8 %; en $ cuenta a 1.130 → 60 %
+        self.assertEqual([v['margen'] for v in r['ventas']], ['48.6', '49.8', '60.0'])
+        self.assertEqual(r['margen_real'], '52.8')  # 39,60 $ de 75 $
+        self.assertEqual(r['ganancia'], '39.60')
+        self.assertEqual(r['tasa_media_venta'], '970.00')  # (22.000 + 22.500 + 28.250) / 75
+        self.assertEqual((r['peor_venta']['margen'], r['mejor_venta']['margen']), ('48.6', '60.0'))
+        self.assertEqual(r['ventas_bajo_objetivo'], 0)
+
+    def test_lote_pendiente_se_estima_si_se_pagase_hoy(self):
+        self.vender_en_bs('880')
+        self.entrar()
+        # A tasa de la factura (USDT de hoy, 1.000): 1 − 10.000/22.000 = 54,5 %
+        r = self.client.get('/api/rentabilidad/lotes/{}/'.format(self.lote)).data
+        self.assertEqual((r['estado'], r['estimado_pago'], r['margen_real']), ('pendiente', True, '54.5'))
+        r = self.client.get('/api/rentabilidad/lotes/{}/?escenario=bcv'.format(self.lote)).data
+        self.assertEqual(r['margen_real'], '60.0')
+        r = self.client.get('/api/rentabilidad/lotes/{}/?escenario=otra&tasa=1320'.format(self.lote)).data
+        self.assertEqual(r['margen_real'], '40.0')
+
+    def test_unidades_perdidas_restan(self):
+        self.vender_en_bs('880')
+        self.como(self.admin)
+        self.client.post('/api/productos/{}/mover_stock/'.format(self.mochila.id),
+                         {'tipo': 'ajuste', 'cantidad': -1, 'motivo': 'Dañado'})
+        self.entrar()
+        r = self.client.get('/api/rentabilidad/lotes/{}/'.format(self.lote)).data
+        self.assertEqual(r['perdidas'], 1)
+        # 25 − 11,36 (venta) − 11,36 (dañado, a la tasa media 880) = 2,27 $
+        self.assertEqual(r['ganancia'], '2.27')
+
+    def test_resumen_y_articulos(self):
+        self.vender_en_bs('880')
+        self.como(self.encargado)
+        self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='efectivo_usd')  # stock sin compra
+        self.entrar()
+        r = self.client.get('/api/rentabilidad/resumen/').data
+        self.assertEqual((r['vendido'], r['vendido_sin_costo'], r['margen_real']),
+                         ('25.00', '18.00', '54.5'))
+        self.assertEqual(r['brecha'], '3.00')  # 25 − 22.000/1.000
+        self.assertEqual(r['pendiente_pagar'], '100.00')
+        art = {a['nombre']: a for a in self.client.get('/api/rentabilidad/articulos/').data}
+        m = art['Morral táctico']
+        self.assertEqual((m['costo_ultimo'], m['margen_estimado'], m['vendidas']),
+                         ('10.00', '60.0', 1))
+        # Reponerlo hoy: 10 × 1.000 Bs; vendido a 880; para un 40 %: 10.000 / (880 × 0,6) = 18,94 $
+        self.assertEqual(m['precio_sugerido'], '18.94')
+        self.assertTrue(art['Bolso dama']['sin_compras'])
+        r = self.client.patch('/api/rentabilidad/ajustes/', {'margen_objetivo': '50'}, format='json')
+        self.assertEqual(r.data['margen_objetivo'], '50')
+        self.assertEqual(self.client.get('/api/rentabilidad/lotes/').status_code, 200)

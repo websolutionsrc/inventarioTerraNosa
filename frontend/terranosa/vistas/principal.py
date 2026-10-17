@@ -9,6 +9,7 @@ from ..widgets import Aviso, confirmar
 from .compras import PaginaCompras
 from .historial import PaginaHistorial
 from .inventario import PaginaInventario
+from .rentabilidad import PaginaRentabilidad
 from .usuarios import PaginaUsuarios
 from .vender import PaginaVender
 from .ventas_hoy import PaginaVentasHoy
@@ -50,7 +51,8 @@ class VentanaPrincipal(QMainWindow):
         capa_contenido.addWidget(self.pilas)
         capa.addWidget(contenido, 1)
 
-        clases = [PaginaVender, PaginaVentasHoy, PaginaInventario, PaginaCompras, PaginaHistorial, PaginaUsuarios]
+        clases = [PaginaVender, PaginaVentasHoy, PaginaInventario, PaginaCompras, PaginaRentabilidad,
+                  PaginaHistorial, PaginaUsuarios]
         self.paginas = []
         for i, clase in enumerate(c for c in clases if api.es_admin or not c.solo_admin):
             pagina = clase(self)

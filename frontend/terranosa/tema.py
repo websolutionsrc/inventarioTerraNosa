@@ -177,6 +177,8 @@ _ICONOS = {
              '<path d="M3 12h.01"/><path d="M3 18h.01"/>',
     'activar': '<path d="M20 6L9 17l-5-5"/>',
     'arriba': '<path d="M6 15l6-6 6 6"/>',
+    'grafica': '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+    'candado': '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     'abajo': '<path d="M6 9l6 6 6-6"/>',
     'carrito_vacio': '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/>'
                      '<path d="M2 2h2l2.7 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L22 7H5.1"/>',

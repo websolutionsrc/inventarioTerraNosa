@@ -75,6 +75,11 @@ cd inventarioTerrNosa
 | `POST compras/{id}/anular/` | Admin | Solo si no salió ninguna unidad |
 | `GET compras/previsiones/` | Admin | Tasas de hoy, ritmo de subida, % cobrado en $, pendiente de pagar y proveedores |
 | `GET/POST/PATCH usuarios/` | Admin | Gestión de usuarios. No se borran: se desactivan |
+| `GET/POST rentabilidad/pin/` | Admin | `GET`: si el PIN de gerencia ya existe. `POST {pin}` entra; `{pin_nuevo, pin_actual?}` lo crea o cambia. Devuelve un token que caduca a los 15 min (máx. 6 intentos por minuto) |
+| `GET rentabilidad/resumen/` | Admin + PIN | De cada 100 $ vendidos, ganancia real, brecha, pendiente de pagar y próximo vencimiento (`?desde=&hasta=`, por defecto el mes en curso) |
+| `GET rentabilidad/lotes/` y `lotes/{id}/` | Admin + PIN | Lotes con margen estimado y real (`?estado=pendiente\|pagado\|cerrado`); la ficha trae el detalle venta por venta |
+| `GET rentabilidad/articulos/` | Admin + PIN | Por artículo: costo último, margen estimado y real, vendidas y precio sugerido para el margen objetivo |
+| `PATCH rentabilidad/ajustes/` | Admin + PIN | `{margen_objetivo}` |
 
 ## Compras y lotes
 
@@ -88,6 +93,18 @@ cd inventarioTerrNosa
   motivo opcional `motivo_precio`, o desde una compra). Las ventas guardan siempre el precio al que se vendieron.
 - Cada venta guarda la **tasa USDT del día** (referencia para medir la pérdida por brecha).
 - El plan completo del análisis de rentabilidad está en `../docs/PLAN.md`.
+
+## Rentabilidad (`inventario/rentabilidad.py`)
+
+- Las rutas `rentabilidad/` piden, además del token de sesión de un admin, la cabecera
+  `X-Pin-Gerencia` con el token que da `rentabilidad/pin/` (firmado, 15 minutos). El PIN se guarda
+  cifrado en `AjustesNegocio`, junto con el margen objetivo (40 % por defecto).
+- Margen de cada venta de un lote = 1 − (costo × Z) ÷ Bs cobrados, con Z la tasa a la que se pagó
+  al proveedor. Las ventas cobradas en $ o USDT cuentan a la tasa Z. Ganancia = margen × lo vendido.
+- Lotes **pendientes de pagar**: se estiman como si se pagasen hoy (`?escenario=factura|usdt|bcv|otra&tasa=`).
+- Las unidades perdidas en ajustes restan su costo. La **brecha** de una venta en Bs es precio en $ −
+  Bs ÷ tasa USDT de ese día (solo como medida).
+- Todo se calcula al pedirlo; no hay resultados guardados que puedan quedar desfasados.
 
 ## Cobros con Binance Pay verificados
 
