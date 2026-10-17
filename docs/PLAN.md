@@ -12,7 +12,7 @@ poner precios.
 - **Margen estimado** = (precio − costo) ÷ precio. Sin tasas.
 - **Margen real**: con las tasas a las que de verdad se cobró y se pagó.
 
-## Fase 1 · Compras y lotes
+## Fase 1 · Compras y lotes ✅ (hecha el 17/10/2026)
 
 - **Nueva compra** (sustituye a "Entrada de mercancía"):
   - proveedor, fecha, y artículos con cantidad y costo unitario en $;

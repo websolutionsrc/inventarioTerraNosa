@@ -6,6 +6,7 @@ from .. import formato, tema
 from ..tareas import ejecutar
 from ..widgets import Columna, Tabla, boton, confirmar, etiqueta
 from .base import Pagina
+from .compras import abrir_nueva_compra
 from .dialogos import DialogoMovimientos, DialogoProducto, DialogoStock
 
 
@@ -76,12 +77,13 @@ class PaginaInventario(Pagina):
 
         acciones = QHBoxLayout()
         self.b_editar = boton('Editar', 'editar')
-        self.b_entrada = boton('Entrada de mercancía', 'entrada')
+        self.b_entrada = boton('Nueva compra', 'entrada')
         self.b_ajuste = boton('Ajustar stock', 'ajuste')
         self.b_movimientos = boton('Entradas y ajustes', 'lista')
         self.b_estado = boton('Desactivar', 'quitar', tipo='peligro')
         self.b_editar.clicked.connect(self.editar)
-        self.b_entrada.clicked.connect(lambda: self.mover_stock('entrada'))
+        self.b_entrada.setToolTip('Registrar una compra de este artículo (suma el stock y crea un lote)')
+        self.b_entrada.clicked.connect(self.nueva_compra)
         self.b_ajuste.clicked.connect(lambda: self.mover_stock('ajuste'))
         self.b_movimientos.clicked.connect(self.ver_movimientos)
         self.b_estado.clicked.connect(self.cambiar_estado)
@@ -166,6 +168,10 @@ class PaginaInventario(Pagina):
             self.avisar('{} de «{}»: {:+d}. Stock actual: {}.'.format(
                 'Entrada' if tipo == 'entrada' else 'Ajuste', p['nombre'], m['cantidad'], m['stock_resultante']))
             self.cargar()
+
+    def nueva_compra(self):
+        p = self.tabla.fila_seleccionada()
+        abrir_nueva_compra(self, producto_inicial=p['id'] if p else None, al_terminar=lambda c: self.cargar())
 
     def ver_movimientos(self):
         p = self.tabla.fila_seleccionada()

@@ -525,3 +525,130 @@ class CobroBinanceTests(BaseAPI):
             url = binance._firmado({'timestamp': 1})
         esperada = hmac.new(b'secreto', b'timestamp=1', hashlib.sha256).hexdigest()
         self.assertTrue(url.endswith('?timestamp=1&signature=' + esperada))
+
+
+class CompraTests(BaseAPI):
+    """Compras al contado o a pagar en N meses, lotes y FIFO."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import TasaCambio
+        TasaCambio.objects.create(fuente='bcv', fecha_valor=timezone.localdate(), compra=Decimal('880'),
+                                  venta=Decimal('880'))
+        TasaCambio.objects.create(fuente='binance', fecha_valor=timezone.localdate(), compra=Decimal('996'),
+                                  venta=Decimal('993'))
+        self.como(self.admin)
+
+    def comprar(self, lineas, plazo=0, forma='bs_usdt', **extra):
+        datos = {'lineas': lineas, 'plazo_meses': plazo, 'forma_pago': forma, 'proveedor': 'Proveedor X'}
+        datos.update(extra)
+        r = self.client.post('/api/compras/', datos, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def lotes(self, producto):
+        from .models import LoteCompra
+        return [(l.cantidad, l.disponible) for l in LoteCompra.objects.filter(producto=producto).order_by('id')]
+
+    def test_compra_a_pagar_en_3_meses_suma_stock_y_queda_pendiente(self):
+        c = self.comprar([{'producto': self.morral.id, 'cantidad': 5, 'costo_unitario': '10.00'}], plazo=3)
+        self.recargar()
+        self.assertEqual(self.morral.stock, 15)
+        self.assertEqual((c['estado'], c['pagada'], c['total_factura']), ('pendiente', False, '50.00'))
+        self.assertEqual(c['vence'], services_sumar_meses(timezone.localdate(), 3).isoformat())
+        pendientes = self.client.get('/api/compras/?estado=pendientes').data
+        self.assertEqual([x['id'] for x in pendientes], [c['id']])
+
+    def test_compra_al_contado_se_paga_en_el_acto_a_tasa_usdt(self):
+        c = self.comprar([{'producto': self.morral.id, 'cantidad': 2, 'costo_unitario': '10.00'}])
+        self.assertEqual((c['estado'], c['tasa_pago'], c['bs_pagados']), ('pagada', '996.0000', '19920.00'))
+
+    def test_pagar_mas_tarde_con_tasa_propia_y_formas_de_pago(self):
+        c = self.comprar([{'producto': self.morral.id, 'cantidad': 2, 'costo_unitario': '10.00'}], plazo=3)
+        r = self.client.post('/api/compras/{}/pagar/'.format(c['id']), {'tasa_pago': '1130'}, format='json')
+        self.assertEqual((r.data['estado'], r.data['bs_pagados']), ('pagada', '22600.00'))
+        self.assertEqual(self.client.post('/api/compras/{}/pagar/'.format(c['id']), {}).status_code, 400)
+        bcv = self.comprar([{'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '5.00'}], forma='bs_bcv')
+        self.assertEqual(bcv['tasa_pago'], '880.0000')
+        usd = self.comprar([{'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '5.00'}], forma='dolares')
+        self.assertEqual((usd['usd_pagados'], usd['bs_pagados']), ('5.00', None))
+        fijos = self.comprar([{'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '4500.00'}],
+                             forma='bs_fijos')
+        self.assertEqual(fijos['bs_pagados'], '4500.00')
+
+    def test_fifo_primero_el_stock_sin_compra_y_luego_el_lote_mas_antiguo(self):
+        # El bolso tiene 3 unidades sin compra registrada; luego entran dos lotes
+        self.comprar([{'producto': self.bolso.id, 'cantidad': 2, 'costo_unitario': '8.00'}], plazo=1,
+                     fecha=(timezone.localdate() - timedelta(days=5)).isoformat())
+        self.comprar([{'producto': self.bolso.id, 'cantidad': 4, 'costo_unitario': '9.00'}], plazo=1)
+        self.como(self.encargado)
+        self.vender([{'producto': self.bolso.id, 'cantidad': 4}])  # 3 sin lote + 1 del lote antiguo
+        self.assertEqual(self.lotes(self.bolso), [(2, 1), (4, 4)])
+        venta = self.vender([{'producto': self.bolso.id, 'cantidad': 3}]).data  # 1 del antiguo + 2 del nuevo
+        self.assertEqual(self.lotes(self.bolso), [(2, 0), (4, 2)])
+        self.client.post('/api/ventas/{}/anular/'.format(venta['id']), {'motivo': 'Prueba'}, format='json')
+        self.assertEqual(self.lotes(self.bolso), [(2, 1), (4, 4)])  # vuelven a su lote
+
+    def test_ajuste_negativo_sale_del_lote(self):
+        self.morral.stock = 0
+        self.morral.save()
+        self.comprar([{'producto': self.morral.id, 'cantidad': 3, 'costo_unitario': '10.00'}])
+        self.client.post('/api/productos/{}/mover_stock/'.format(self.morral.id),
+                         {'tipo': 'ajuste', 'cantidad': -1, 'motivo': 'Dañado'})
+        self.assertEqual(self.lotes(self.morral), [(3, 2)])
+
+    def test_la_venta_guarda_la_tasa_usdt_del_dia(self):
+        self.como(self.encargado)
+        r = self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='pago_movil')
+        self.assertEqual(r.data['tasa_usdt'], '996.0000')
+
+    def test_anular_compra_solo_si_no_salio_nada(self):
+        self.morral.stock = 0
+        self.morral.save()
+        c = self.comprar([{'producto': self.morral.id, 'cantidad': 3, 'costo_unitario': '10.00'}], plazo=2)
+        otra = self.comprar([{'producto': self.morral.id, 'cantidad': 2, 'costo_unitario': '11.00'}], plazo=2)
+        r = self.client.post('/api/compras/{}/anular/'.format(otra['id']))
+        self.assertEqual(r.data['estado'], 'anulada')
+        self.recargar()
+        self.assertEqual(self.morral.stock, 3)
+        self.como(self.encargado)
+        self.vender([{'producto': self.morral.id, 'cantidad': 1}])
+        self.como(self.admin)
+        self.assertEqual(self.client.post('/api/compras/{}/anular/'.format(c['id'])).status_code, 400)
+
+    def test_usar_este_precio_cambia_el_precio_y_guarda_lo_previsto(self):
+        c = self.comprar([{'producto': self.morral.id, 'cantidad': 2, 'costo_unitario': '10.00',
+                           'precio_previsto': '27.50', 'margen_previsto': '51.30', 'usar_precio': True},
+                          {'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '6.00',
+                           'precio_previsto': '30.00'}], plazo=3)
+        self.recargar()
+        self.assertEqual((self.morral.precio, self.bolso.precio), (Decimal('27.50'), Decimal('18.00')))
+        self.assertEqual(c['lotes'][0]['margen_previsto'], '51.30')
+
+    def test_errores_y_permisos(self):
+        r = self.client.post('/api/compras/', {'lineas': [{'producto': self.morral.id, 'cantidad': 1,
+                                                           'costo_unitario': '1'},
+                                                          {'producto': self.morral.id, 'cantidad': 1,
+                                                           'costo_unitario': '1'}]}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.como(self.encargado)
+        self.assertEqual(self.client.get('/api/compras/').status_code, 403)
+
+    def test_previsiones(self):
+        self.como(self.encargado)
+        self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='efectivo_usd')   # 18 $
+        self.vender([{'producto': self.morral.id, 'cantidad': 1}], metodo='pago_movil')    # 25,50 $
+        self.como(self.admin)
+        self.comprar([{'producto': self.morral.id, 'cantidad': 1, 'costo_unitario': '10.00'}], plazo=3,
+                     proveedor='Distribuidora Valencia')
+        d = self.client.get('/api/compras/previsiones/').data
+        self.assertEqual((d['bcv'], d['usdt']), ('880.0000', '996.0000'))
+        self.assertEqual(d['porcentaje_dolares'], '41.4')
+        self.assertIsNone(d['ritmo_usdt'])  # aún no hay historial
+        self.assertEqual(d['pendiente_usd'], '10.00')
+        self.assertIn('Distribuidora Valencia', d['proveedores'])
+
+
+def services_sumar_meses(fecha, meses):
+    from .services import sumar_meses
+    return sumar_meses(fecha, meses)

@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import CobroBinance, EntradaInventario, Producto, SalidaInventario, Usuario, Venta
+from .models import CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, Usuario, Venta
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -95,7 +95,7 @@ class VentaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Venta
         fields = ['id', 'fecha', 'usuario', 'metodo_pago', 'metodo_pago_nombre', 'moneda', 'canal', 'canal_nombre',
-                  'total', 'tasa_cambio', 'tasa_bcv', 'total_bs', 'pago_binance', 'lineas', 'anulada', 'anulada_por',
+                  'total', 'tasa_cambio', 'tasa_bcv', 'total_bs', 'tasa_usdt', 'pago_binance', 'lineas', 'anulada', 'anulada_por',
                   'anulada_en', 'motivo_anulacion']
 
     def get_moneda(self, obj):
@@ -169,3 +169,71 @@ class CobroBinanceSerializer(serializers.ModelSerializer):
 class NuevoCobroBinanceSerializer(serializers.Serializer):
     lineas = NuevaLineaSerializer(many=True, allow_empty=False)
     canal = serializers.ChoiceField(choices=Venta.Canal.choices, default=Venta.Canal.TIENDA)
+
+
+# --- Compras ---
+
+class LoteCompraSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    salidas = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LoteCompra
+        fields = ['id', 'producto', 'producto_nombre', 'cantidad', 'disponible', 'salidas', 'costo_unitario',
+                  'precio_previsto', 'margen_previsto']
+
+    def get_salidas(self, obj):
+        return obj.cantidad - obj.disponible
+
+
+class CompraSerializer(serializers.ModelSerializer):
+    lotes = LoteCompraSerializer(many=True, read_only=True)
+    usuario = serializers.CharField(source='usuario.username', read_only=True)
+    forma_pago_nombre = serializers.CharField(source='get_forma_pago_display', read_only=True)
+    estado = serializers.SerializerMethodField()
+    dias_para_vencer = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Compra
+        fields = ['id', 'proveedor', 'fecha', 'plazo_meses', 'vence', 'forma_pago', 'forma_pago_nombre',
+                  'total_factura', 'notas', 'usuario', 'creada', 'anulada', 'pagada', 'pagada_el', 'tasa_pago',
+                  'bs_pagados', 'usd_pagados', 'tasa_usdt_pago', 'estado', 'dias_para_vencer', 'lotes']
+
+    def get_dias_para_vencer(self, obj):
+        from django.utils import timezone
+        return (obj.vence - timezone.localdate()).days
+
+    def get_estado(self, obj):
+        if obj.anulada:
+            return 'anulada'
+        if obj.pagada:
+            return 'pagada'
+        return 'vencida' if self.get_dias_para_vencer(obj) < 0 else 'pendiente'
+
+
+class NuevaLineaCompraSerializer(serializers.Serializer):
+    producto = serializers.IntegerField()
+    cantidad = serializers.IntegerField(min_value=1, max_value=99999)
+    costo_unitario = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'))
+    precio_previsto = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    margen_previsto = serializers.DecimalField(max_digits=6, decimal_places=2, required=False, allow_null=True)
+    usar_precio = serializers.BooleanField(required=False, default=False)  # "Usar este precio"
+
+
+class PagoCompraSerializer(serializers.Serializer):
+    fecha = serializers.DateField(required=False)
+    tasa_pago = serializers.DecimalField(max_digits=16, decimal_places=4, required=False, allow_null=True,
+                                         min_value=Decimal('0.0001'))
+    bs_pagados = serializers.DecimalField(max_digits=18, decimal_places=2, required=False, allow_null=True)
+    usd_pagados = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, allow_null=True)
+    tasa_usdt = serializers.DecimalField(max_digits=16, decimal_places=4, required=False, allow_null=True)
+
+
+class NuevaCompraSerializer(serializers.Serializer):
+    proveedor = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    fecha = serializers.DateField(required=False)
+    plazo_meses = serializers.IntegerField(min_value=0, max_value=36, default=0)
+    forma_pago = serializers.ChoiceField(choices=Compra.FormaPago.choices, default=Compra.FormaPago.BS_USDT)
+    notas = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    lineas = NuevaLineaCompraSerializer(many=True, allow_empty=False)
+    pago = PagoCompraSerializer(required=False)

@@ -91,6 +91,7 @@ class EntradaInventario(models.Model):
     cantidad = models.IntegerField()  # negativa en ajustes que restan
     stock_resultante = models.IntegerField(null=True, blank=True)
     motivo = models.CharField(max_length=255, blank=True, default='')
+    compra = models.ForeignKey('Compra', on_delete=models.PROTECT, null=True, blank=True, related_name='movimientos')
     fecha = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -132,6 +133,8 @@ class Venta(models.Model):
     tasa_cambio = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)  # Bs/$ cobrada
     tasa_bcv = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)  # BCV de ese momento
     total_bs = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    # Tasa USDT (Binance, compra) del día: sirve para medir la pérdida por brecha de las ventas en Bs
+    tasa_usdt = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
 
     @classmethod
     def moneda_de(cls, metodo):
@@ -232,3 +235,65 @@ class IngresoBinanceSimulado(models.Model):
     monto = models.DecimalField(max_digits=18, decimal_places=8)
     pagador = models.CharField(max_length=150, blank=True, default='Cliente de prueba')
     fecha = models.DateTimeField(auto_now_add=True)
+
+
+class Compra(models.Model):
+    """
+    Compra a un proveedor. Se paga de una sola vez: al contado o a los N meses (plazo_meses).
+    Cada artículo comprado es un lote (LoteCompra); las ventas salen de los lotes por orden (FIFO).
+    """
+
+    class FormaPago(models.TextChoices):
+        BS_USDT = 'bs_usdt', 'En Bs a tasa USDT del día de pago'
+        BS_BCV = 'bs_bcv', 'En Bs a tasa BCV del día de pago'
+        DOLARES = 'dolares', 'En dólares o USDT'
+        BS_FIJOS = 'bs_fijos', 'Monto fijo en Bs'
+
+    proveedor = models.CharField(max_length=150, blank=True, default='')
+    fecha = models.DateField()
+    plazo_meses = models.PositiveSmallIntegerField(default=0)  # 0 = contado
+    vence = models.DateField()
+    forma_pago = models.CharField(max_length=10, choices=FormaPago.choices, default=FormaPago.BS_USDT)
+    total_factura = models.DecimalField(max_digits=14, decimal_places=2)  # en $ (en Bs si es monto fijo en Bs)
+    notas = models.CharField(max_length=255, blank=True, default='')
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name='compras')
+    creada = models.DateTimeField(auto_now_add=True)
+    anulada = models.BooleanField(default=False)
+
+    # El pago (uno solo, de todo el importe)
+    pagada = models.BooleanField(default=False)
+    pagada_el = models.DateField(null=True, blank=True)
+    tasa_pago = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)  # Z1: Bs por $
+    bs_pagados = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    usd_pagados = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)  # pago en $/USDT
+    tasa_usdt_pago = models.DecimalField(max_digits=16, decimal_places=4, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-fecha', '-id']
+
+    @property
+    def en_bolivares_fijos(self):
+        return self.forma_pago == self.FormaPago.BS_FIJOS
+
+
+class LoteCompra(models.Model):
+    compra = models.ForeignKey(Compra, on_delete=models.PROTECT, related_name='lotes')
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='lotes')
+    cantidad = models.PositiveIntegerField()
+    disponible = models.PositiveIntegerField()  # unidades de este lote que aún no han salido
+    costo_unitario = models.DecimalField(max_digits=14, decimal_places=2)  # en la moneda de la factura
+    precio_previsto = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    margen_previsto = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)  # % con la brecha
+
+    class Meta:
+        ordering = ['compra__fecha', 'compra_id', 'id']
+
+
+class AsignacionLote(models.Model):
+    """Unidades de un lote que salieron por una línea de venta o por un ajuste de stock (FIFO)."""
+    lote = models.ForeignKey(LoteCompra, on_delete=models.PROTECT, related_name='asignaciones')
+    linea_venta = models.ForeignKey(SalidaInventario, on_delete=models.CASCADE, null=True, blank=True,
+                                    related_name='asignaciones')
+    movimiento = models.ForeignKey(EntradaInventario, on_delete=models.CASCADE, null=True, blank=True,
+                                   related_name='asignaciones')
+    cantidad = models.PositiveIntegerField()

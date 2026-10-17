@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QMainWindow, QPu
 from .. import recursos, tema
 from ..tareas import ejecutar
 from ..widgets import Aviso, confirmar
+from .compras import PaginaCompras
 from .historial import PaginaHistorial
 from .inventario import PaginaInventario
 from .usuarios import PaginaUsuarios
@@ -49,7 +50,7 @@ class VentanaPrincipal(QMainWindow):
         capa_contenido.addWidget(self.pilas)
         capa.addWidget(contenido, 1)
 
-        clases = [PaginaVender, PaginaVentasHoy, PaginaInventario, PaginaHistorial, PaginaUsuarios]
+        clases = [PaginaVender, PaginaVentasHoy, PaginaInventario, PaginaCompras, PaginaHistorial, PaginaUsuarios]
         self.paginas = []
         for i, clase in enumerate(c for c in clases if api.es_admin or not c.solo_admin):
             pagina = clase(self)

@@ -15,8 +15,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import binance, services, tasas
-from .models import CobroBinance, EntradaInventario, Producto, Usuario, Venta
-from .serializers import (AnularVentaSerializer, CobroBinanceSerializer, MovimientoStockSerializer,
+from .models import CobroBinance, Compra, EntradaInventario, Producto, Usuario, Venta
+from .serializers import (AnularVentaSerializer, CobroBinanceSerializer, CompraSerializer, MovimientoStockSerializer,
+                          NuevaCompraSerializer, PagoCompraSerializer,
                           MoverStockSerializer, NuevoCobroBinanceSerializer,
                           NuevaVentaSerializer, ProductoSerializer, UsuarioSerializer, VentaSerializer)
 
@@ -353,3 +354,71 @@ class CobroBinanceViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin, vi
         services.conciliar_binance()  # por si el pago llegó justo ahora
         cobro = services.cancelar_cobro_binance(cobro.pk)
         return Response(self.get_serializer(cobro).data)
+
+
+# --- Compras a proveedores (solo admin) -------------------------------------------------
+
+class CompraViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin,
+                    viewsets.GenericViewSet):
+    """
+    Compras con sus lotes. Filtro ?estado=pendientes|pagadas|anuladas. Se pagan de una vez
+    (contado o a los N meses) con POST {id}/pagar/; POST {id}/anular/ si no salió nada.
+    GET previsiones/: tasas de hoy, ritmo de subida y % cobrado en dólares (para estimar precios).
+    """
+    serializer_class = CompraSerializer
+    permission_classes = [SoloAdmin]
+
+    def get_queryset(self):
+        qs = Compra.objects.select_related('usuario').prefetch_related('lotes__producto')
+        estado = self.request.query_params.get('estado')
+        if estado == 'pendientes':
+            qs = qs.filter(pagada=False, anulada=False)
+        elif estado == 'pagadas':
+            qs = qs.filter(pagada=True, anulada=False)
+        elif estado == 'anuladas':
+            qs = qs.filter(anulada=True)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        datos = NuevaCompraSerializer(data=request.data)
+        datos.is_valid(raise_exception=True)
+        d = dict(datos.validated_data)
+        lineas = [dict(l) for l in d.pop('lineas')]
+        precios = {int(l['producto']): l['precio_previsto'] for l in lineas
+                   if l.pop('usar_precio', False) and l.get('precio_previsto')}
+        try:
+            compra = services.registrar_compra(request.user, lineas, precios=precios, **d)
+        except services.ErrorNegocio as e:
+            return _error(e)
+        return Response(self.get_serializer(Compra.objects.get(pk=compra.pk)).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def pagar(self, request, pk=None):
+        compra = self.get_object()
+        datos = PagoCompraSerializer(data=request.data)
+        datos.is_valid(raise_exception=True)
+        try:
+            services.registrar_pago_compra(compra.pk, **datos.validated_data)
+        except services.ErrorNegocio as e:
+            return _error(e)
+        return Response(self.get_serializer(Compra.objects.get(pk=compra.pk)).data)
+
+    @action(detail=True, methods=['post'])
+    def anular(self, request, pk=None):
+        compra = self.get_object()
+        try:
+            services.anular_compra(compra.pk, request.user)
+        except services.ErrorNegocio as e:
+            return _error(e)
+        return Response(self.get_serializer(Compra.objects.get(pk=compra.pk)).data)
+
+    @action(detail=False, methods=['get'])
+    def previsiones(self, request):
+        datos = services.previsiones_compra()
+        pendientes = Compra.objects.filter(pagada=False, anulada=False)
+        datos['pendiente_usd'] = sum((c.total_factura for c in pendientes if not c.en_bolivares_fijos), Decimal('0'))
+        datos['pendiente_bs'] = sum((c.total_factura for c in pendientes if c.en_bolivares_fijos), Decimal('0'))
+        proxima = pendientes.order_by('vence').first()
+        datos['proximo_vencimiento'] = CompraSerializer(proxima).data if proxima else None
+        datos['proveedores'] = sorted({p for p in Compra.objects.values_list('proveedor', flat=True) if p})
+        return Response({k: (str(v) if isinstance(v, Decimal) else v) for k, v in datos.items()})

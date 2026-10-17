@@ -16,8 +16,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from inventario import services
-from inventario.models import (CobroBinance, EntradaInventario, IngresoBinanceSimulado, Producto, SalidaInventario,
-                               TasaCambio, Usuario, Venta)
+from inventario.models import (CobroBinance, Compra, EntradaInventario, IngresoBinanceSimulado, LoteCompra, Producto,
+                               SalidaInventario, TasaCambio, Usuario, Venta)
 
 USUARIOS = [('admin', 'admin-terranosa', True), ('encargado', 'encargado-terranosa', False)]
 
@@ -57,6 +57,8 @@ class Command(BaseCommand):
             SalidaInventario.objects.all().delete()
             Venta.objects.all().delete()
             EntradaInventario.objects.all().delete()
+            LoteCompra.objects.all().delete()
+            Compra.objects.all().delete()
             Producto.objects.all().delete()
         elif Producto.objects.exists():
             raise CommandError('Ya hay productos. Usa --borrar para empezar de cero.')
@@ -81,8 +83,21 @@ class Command(BaseCommand):
         if not TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).exists():
             TasaCambio.objects.create(fuente=TasaCambio.Fuente.BCV, fecha_valor=timezone.localdate(),
                                       compra=Decimal('880.1159'), venta=Decimal('880.1159'))
+        if not TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BINANCE).exists():
+            TasaCambio.objects.create(fuente=TasaCambio.Fuente.BINANCE, fecha_valor=timezone.localdate(),
+                                      compra=Decimal('996.00'), venta=Decimal('993.30'))
 
         p = {i: prod.id for i, prod in enumerate(productos)}
+        hoy = timezone.localdate()
+
+        # Compras: una al contado (ya pagada) y otra a pagar en 3 meses
+        services.registrar_compra(admin, [{'producto': p[1], 'cantidad': 10, 'costo_unitario': '18.00'}],
+                                  'bs_usdt', plazo_meses=0, fecha=hoy - timedelta(days=20),
+                                  proveedor='Importadora Caribe', pago={'tasa_pago': '960'})
+        services.registrar_compra(admin, [{'producto': p[3], 'cantidad': 12, 'costo_unitario': '9.50'},
+                                          {'producto': p[13], 'cantidad': 20, 'costo_unitario': '2.40'}],
+                                  'bs_usdt', plazo_meses=3, fecha=hoy - timedelta(days=10),
+                                  proveedor='Distribuidora Valencia')
         # Ventas de ayer (se mueven de fecha después de crearlas)
         ayer = [
             services.registrar_venta(encargado, [{'producto': p[0], 'cantidad': 1}], 'efectivo_usd', 'tienda'),
@@ -100,5 +115,6 @@ class Command(BaseCommand):
         services.mover_stock(p[4], admin, EntradaInventario.Tipo.AJUSTE, -1, 'Llegó con el cierre roto')
 
         self.stdout.write(self.style.SUCCESS(
-            f'Listo: {len(productos)} productos, {Venta.objects.count()} ventas y {len(USUARIOS)} usuarios '
+            f'Listo: {len(productos)} productos, {Compra.objects.count()} compras, {Venta.objects.count()} ventas '
+            f'y {len(USUARIOS)} usuarios '
             '(ver contraseñas en inventario/management/commands/datos_demo.py).'))

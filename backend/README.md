@@ -69,7 +69,22 @@ cd inventarioTerrNosa
 | `POST cobros-binance/` | Autenticado | `{lineas, canal}`: abre un cobro con Binance y devuelve el monto en USDT |
 | `GET cobros-binance/{id}/` | Autenticado | Mira en Binance si llegó el pago; al confirmarse trae la venta creada |
 | `POST cobros-binance/{id}/cancelar/` | Autenticado | Cancela el cobro si aún no se pagó |
+| `GET/POST compras/` | Admin | Compras con sus lotes (`?estado=pendientes\|pagadas\|anuladas`). Crear: `{proveedor, fecha, plazo_meses, forma_pago, lineas: [{producto, cantidad, costo_unitario, precio_previsto?, margen_previsto?, usar_precio?}], pago?}` |
+| `POST compras/{id}/pagar/` | Admin | Pago único: `{fecha, tasa_pago, bs_pagados}` (o `usd_pagados`) |
+| `POST compras/{id}/anular/` | Admin | Solo si no salió ninguna unidad |
+| `GET compras/previsiones/` | Admin | Tasas de hoy, ritmo de subida, % cobrado en $, pendiente de pagar y proveedores |
 | `GET/POST/PATCH usuarios/` | Admin | Gestión de usuarios. No se borran: se desactivan |
+
+## Compras y lotes
+
+- Cada **compra** se paga **de una sola vez**: al contado o **a pagar en N meses** (vence a los N
+  meses de la fecha). Formas de pago: en Bs a tasa USDT del día de pago (por defecto), en Bs a tasa
+  BCV, en dólares/USDT o un monto fijo en Bs. Al contado, el pago se registra en el acto.
+- Cada artículo comprado es un **lote**. Las ventas salen **FIFO**: primero las unidades que ya
+  había antes de registrar compras (sin costo conocido) y después el lote más antiguo. Anular una
+  venta devuelve las unidades a su lote; un ajuste negativo también sale del lote.
+- Cada venta guarda la **tasa USDT del día** (referencia para medir la pérdida por brecha).
+- El plan completo del análisis de rentabilidad está en `../docs/PLAN.md`.
 
 ## Cobros con Binance Pay verificados
 

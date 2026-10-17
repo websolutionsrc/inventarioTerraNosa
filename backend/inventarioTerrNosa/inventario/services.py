@@ -10,7 +10,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from .models import EntradaInventario, Producto, SalidaInventario, TasaCambio, Venta
+from .models import (AsignacionLote, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio,
+                     Venta)
 
 
 class ErrorNegocio(Exception):
@@ -33,6 +34,42 @@ def ultima_tasa_bcv():
     """Última tasa del BCV guardada (sin consultar la web: no debe frenar una venta)."""
     tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).order_by('-obtenida_en').first()
     return tasa.venta if tasa else None
+
+
+def ultima_tasa_usdt():
+    """Última tasa USDT guardada: lo que cuesta comprar un USDT en Binance P2P."""
+    tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BINANCE).order_by('-obtenida_en').first()
+    return tasa.compra if tasa else None
+
+
+# --- Lotes (FIFO) ---------------------------------------------------------------------
+
+def _sacar_de_lotes(producto, cantidad, stock_antes, linea=None, movimiento=None):
+    """
+    Saca 'cantidad' unidades de los lotes del producto, del más antiguo al más nuevo (FIFO).
+    Primero salen las unidades que no tienen lote (stock anterior a registrar compras).
+    """
+    lotes = list(LoteCompra.objects.select_for_update()
+                 .filter(producto=producto, disponible__gt=0, compra__anulada=False)
+                 .order_by('compra__fecha', 'compra_id', 'id'))
+    sin_lote = max(0, stock_antes - sum(l.disponible for l in lotes))
+    pendiente = cantidad - min(sin_lote, cantidad)
+    for lote in lotes:
+        if pendiente <= 0:
+            break
+        n = min(lote.disponible, pendiente)
+        lote.disponible -= n
+        lote.save(update_fields=['disponible'])
+        AsignacionLote.objects.create(lote=lote, linea_venta=linea, movimiento=movimiento, cantidad=n)
+        pendiente -= n
+
+
+def _devolver_a_lotes(asignaciones):
+    for asignacion in list(asignaciones):
+        lote = LoteCompra.objects.select_for_update().get(pk=asignacion.lote_id)
+        lote.disponible += asignacion.cantidad
+        lote.save(update_fields=['disponible'])
+        asignacion.delete()
 
 
 @transaction.atomic
@@ -81,12 +118,14 @@ def registrar_venta(usuario, lineas, metodo_pago, canal, tasa=None):
     if sin_stock:
         raise ErrorNegocio("Stock insuficiente: " + "; ".join(sin_stock) + ".")
 
-    venta = Venta.objects.create(usuario=usuario, metodo_pago=metodo_pago, canal=canal)
+    venta = Venta.objects.create(usuario=usuario, metodo_pago=metodo_pago, canal=canal,
+                                 tasa_usdt=ultima_tasa_usdt())
     total = Decimal('0.00')
     for pid, cantidad in cantidades.items():
         producto = productos[pid]
-        SalidaInventario.objects.create(venta=venta, producto=producto, cantidad=cantidad,
-                                        precio_unitario=producto.precio)
+        linea = SalidaInventario.objects.create(venta=venta, producto=producto, cantidad=cantidad,
+                                                precio_unitario=producto.precio)
+        _sacar_de_lotes(producto, cantidad, producto.stock, linea=linea)
         producto.stock -= cantidad
         producto.save(update_fields=['stock', 'actualizado'])
         total += producto.precio * cantidad
@@ -125,6 +164,7 @@ def anular_venta(venta_id, usuario, motivo):
         producto = productos[linea.producto_id]
         producto.stock += linea.cantidad
         producto.save(update_fields=['stock', 'actualizado'])
+        _devolver_a_lotes(linea.asignaciones.all())  # las unidades vuelven a su lote
 
     venta.anulada = True
     venta.anulada_por = usuario
@@ -151,11 +191,15 @@ def mover_stock(producto_id, usuario, tipo, cantidad, motivo=''):
     if producto.stock + cantidad < 0:
         raise ErrorNegocio(f"El stock no puede quedar negativo (hay {producto.stock}).")
 
+    stock_antes = producto.stock
     producto.stock += cantidad
     producto.save(update_fields=['stock', 'actualizado'])
-    return EntradaInventario.objects.create(producto=producto, usuario_admin=usuario, tipo=tipo,
-                                            cantidad=cantidad, stock_resultante=producto.stock,
-                                            motivo=motivo[:255])
+    movimiento = EntradaInventario.objects.create(producto=producto, usuario_admin=usuario, tipo=tipo,
+                                                  cantidad=cantidad, stock_resultante=producto.stock,
+                                                  motivo=motivo[:255])
+    if cantidad < 0:  # las unidades perdidas o dañadas también salen de su lote
+        _sacar_de_lotes(producto, -cantidad, stock_antes, movimiento=movimiento)
+    return movimiento
 
 
 @transaction.atomic
@@ -274,3 +318,173 @@ def cancelar_cobro_binance(cobro_id):
         cobro.estado = CobroBinance.Estado.CANCELADO
         cobro.save(update_fields=['estado'])
     return cobro
+
+
+# --- Compras a proveedores --------------------------------------------------------------
+
+def sumar_meses(fecha, meses):
+    import calendar
+    anio, mes = divmod(fecha.month - 1 + meses, 12)
+    anio, mes = fecha.year + anio, mes + 1
+    return fecha.replace(year=anio, month=mes, day=min(fecha.day, calendar.monthrange(anio, mes)[1]))
+
+
+@transaction.atomic
+def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, proveedor='', notas='',
+                     pago=None, precios=None):
+    """
+    lineas: [{"producto", "cantidad", "costo_unitario", "precio_previsto"?, "margen_previsto"?}].
+    Suma el stock y crea un lote por artículo. Al contado se registra el pago en el acto (pago:
+    datos opcionales de registrar_pago_compra). precios: {producto_id: precio} para "Usar este precio".
+    """
+    if not lineas:
+        raise ErrorNegocio("La compra no tiene artículos.")
+    fecha = fecha or timezone.localdate()
+    plazo_meses = int(plazo_meses or 0)
+    if plazo_meses < 0:
+        raise ErrorNegocio("El plazo no puede ser negativo.")
+
+    ids = [int(l['producto']) for l in lineas]
+    if len(set(ids)) != len(ids):
+        raise ErrorNegocio("Hay artículos repetidos en la compra: junta las cantidades en una sola línea.")
+    productos = {p.id: p for p in Producto.objects.select_for_update().filter(id__in=ids).order_by('id')}
+    total = Decimal('0.00')
+    for l in lineas:
+        if int(l['producto']) not in productos:
+            raise ErrorNegocio("Producto no encontrado: {}.".format(l['producto']))
+        if int(l['cantidad']) <= 0 or Decimal(l['costo_unitario']) <= 0:
+            raise ErrorNegocio("Cantidades y costos deben ser mayores que cero.")
+        total += Decimal(l['costo_unitario']) * int(l['cantidad'])
+
+    compra = Compra.objects.create(
+        usuario=usuario, proveedor=(proveedor or '').strip()[:150], fecha=fecha, plazo_meses=plazo_meses,
+        vence=sumar_meses(fecha, plazo_meses), forma_pago=forma_pago, total_factura=total,
+        notas=(notas or '')[:255])
+    motivo = 'Compra #{}'.format(compra.id) + (' · {}'.format(compra.proveedor) if compra.proveedor else '')
+
+    for l in lineas:
+        producto = productos[int(l['producto'])]
+        cantidad = int(l['cantidad'])
+        LoteCompra.objects.create(compra=compra, producto=producto, cantidad=cantidad, disponible=cantidad,
+                                  costo_unitario=Decimal(l['costo_unitario']),
+                                  precio_previsto=l.get('precio_previsto'),
+                                  margen_previsto=l.get('margen_previsto'))
+        producto.stock += cantidad
+        campos = ['stock', 'actualizado']
+        nuevo_precio = (precios or {}).get(producto.id)
+        if nuevo_precio is not None:
+            if Decimal(nuevo_precio) <= 0:
+                raise ErrorNegocio("El precio de venta debe ser mayor que cero.")
+            producto.precio = Decimal(nuevo_precio)
+            campos.append('precio')
+        producto.save(update_fields=campos)
+        EntradaInventario.objects.create(producto=producto, usuario_admin=usuario,
+                                         tipo=EntradaInventario.Tipo.ENTRADA, cantidad=cantidad,
+                                         stock_resultante=producto.stock, compra=compra, motivo=motivo)
+    if plazo_meses == 0:
+        registrar_pago_compra(compra.id, **(pago or {}))
+        compra.refresh_from_db()
+    return compra
+
+
+@transaction.atomic
+def registrar_pago_compra(compra_id, fecha=None, tasa_pago=None, bs_pagados=None, usd_pagados=None,
+                          tasa_usdt=None):
+    """
+    Registra el pago (único) de una compra. Si no se indican, la tasa de pago (Z1) es la USDT o
+    la BCV guardada más reciente según la forma de pago, y los Bs pagados = total × tasa.
+    """
+    compra = Compra.objects.select_for_update().get(pk=compra_id)
+    if compra.anulada:
+        raise ErrorNegocio("La compra está anulada.")
+    if compra.pagada:
+        raise ErrorNegocio("Esta compra ya está pagada.")
+    forma = compra.forma_pago
+    tasa_usdt = Decimal(tasa_usdt) if tasa_usdt else ultima_tasa_usdt()
+
+    if forma == Compra.FormaPago.DOLARES:
+        usd_pagados = Decimal(usd_pagados) if usd_pagados is not None else compra.total_factura
+        tasa_pago = None
+        bs_pagados = None
+    elif forma == Compra.FormaPago.BS_FIJOS:
+        bs_pagados = Decimal(bs_pagados) if bs_pagados is not None else compra.total_factura
+        tasa_pago = None
+        usd_pagados = None
+    else:
+        if tasa_pago is None:
+            tasa_pago = ultima_tasa_usdt() if forma == Compra.FormaPago.BS_USDT else ultima_tasa_bcv()
+        if not tasa_pago:
+            raise ErrorNegocio("No hay tasa del día guardada: indica la tasa a la que se pagó.")
+        tasa_pago = Decimal(tasa_pago)
+        if tasa_pago <= 0:
+            raise ErrorNegocio("La tasa de pago debe ser mayor que cero.")
+        bs_pagados = Decimal(bs_pagados) if bs_pagados is not None else compra.total_factura * tasa_pago
+        usd_pagados = None
+    if (bs_pagados is not None and bs_pagados <= 0) or (usd_pagados is not None and usd_pagados <= 0):
+        raise ErrorNegocio("El importe pagado debe ser mayor que cero.")
+
+    compra.pagada = True
+    compra.pagada_el = fecha or timezone.localdate()
+    compra.tasa_pago = tasa_pago
+    compra.bs_pagados = bs_pagados.quantize(Decimal('0.01')) if bs_pagados is not None else None
+    compra.usd_pagados = usd_pagados
+    compra.tasa_usdt_pago = tasa_usdt
+    compra.save()
+    return compra
+
+
+@transaction.atomic
+def anular_compra(compra_id, usuario):
+    """Solo si no ha salido ninguna unidad de sus lotes: quita el stock y deja la compra anulada."""
+    compra = Compra.objects.select_for_update().get(pk=compra_id)
+    if compra.anulada:
+        raise ErrorNegocio("La compra ya estaba anulada.")
+    lotes = list(compra.lotes.select_for_update())
+    if any(l.disponible != l.cantidad for l in lotes):
+        raise ErrorNegocio("No se puede anular: ya se vendieron o ajustaron unidades de esta compra.")
+    for lote in lotes:
+        producto = Producto.objects.select_for_update().get(pk=lote.producto_id)
+        if producto.stock < lote.cantidad:
+            raise ErrorNegocio("No se puede anular: «{}» tiene menos stock que lo comprado.".format(producto.nombre))
+        producto.stock -= lote.cantidad
+        producto.save(update_fields=['stock', 'actualizado'])
+        EntradaInventario.objects.create(producto=producto, usuario_admin=usuario,
+                                         tipo=EntradaInventario.Tipo.AJUSTE, cantidad=-lote.cantidad,
+                                         stock_resultante=producto.stock, compra=compra,
+                                         motivo='Compra #{} anulada'.format(compra.id))
+        lote.disponible = 0
+        lote.save(update_fields=['disponible'])
+    compra.anulada = True
+    compra.save(update_fields=['anulada'])
+    return compra
+
+
+def _ritmo_mensual(fuente, campo):
+    """Subida media mensual (%) según el historial guardado, o None si hay menos de 25 días."""
+    filas = list(TasaCambio.objects.filter(fuente=fuente).order_by('fecha_valor'))
+    if len(filas) < 2:
+        return None
+    primera, ultima = filas[0], filas[-1]
+    dias = (ultima.fecha_valor - primera.fecha_valor).days
+    if dias < 25 or not getattr(primera, campo):
+        return None
+    factor = float(getattr(ultima, campo) / getattr(primera, campo)) ** (30.0 / dias)
+    return Decimal(str(round((factor - 1) * 100, 2)))
+
+
+def previsiones_compra():
+    """Datos para estimar ganancia y precio al comprar: tasas de hoy, su ritmo y cómo se cobra."""
+    from django.db.models import Sum
+    desde = timezone.now() - timedelta(days=30)
+    ventas = Venta.objects.filter(anulada=False, fecha__gte=desde)
+    total = ventas.aggregate(t=Sum('total'))['t'] or Decimal('0')
+    en_dolares = (ventas.exclude(metodo_pago__in=Venta.METODOS_EN_BOLIVARES).aggregate(t=Sum('total'))['t']
+                  or Decimal('0'))
+    return {
+        'bcv': ultima_tasa_bcv(),
+        'usdt': ultima_tasa_usdt(),
+        'ritmo_bcv': _ritmo_mensual(TasaCambio.Fuente.BCV, 'venta'),
+        'ritmo_usdt': _ritmo_mensual(TasaCambio.Fuente.BINANCE, 'compra'),
+        'porcentaje_dolares': ((en_dolares / total) * 100).quantize(Decimal('0.1')) if total else None,
+        'ventas_analizadas': ventas.count(),
+    }

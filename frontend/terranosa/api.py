@@ -159,6 +159,24 @@ class Api(object):
     def anular_venta(self, venta_id, motivo):
         return self._pedir('POST', 'ventas/{}/anular/'.format(venta_id), {'motivo': motivo})
 
+    # --- Compras a proveedores (admin) ---
+
+    def compras(self, estado=None):
+        return self._pedir('GET', 'compras/', params={'estado': estado} if estado else None)
+
+    def crear_compra(self, datos):
+        return self._pedir('POST', 'compras/', datos)
+
+    def pagar_compra(self, compra_id, datos):
+        return self._pedir('POST', 'compras/{}/pagar/'.format(compra_id), datos)
+
+    def anular_compra(self, compra_id):
+        return self._pedir('POST', 'compras/{}/anular/'.format(compra_id))
+
+    def previsiones_compra(self):
+        """Tasas de hoy, ritmo de subida, % cobrado en dólares, pendiente de pagar y proveedores."""
+        return self._pedir('GET', 'compras/previsiones/')
+
     # --- Cobros con Binance (verificados por el servidor) ---
 
     @property

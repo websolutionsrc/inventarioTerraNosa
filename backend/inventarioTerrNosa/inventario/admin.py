@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CobroBinance, EntradaInventario, Producto, SalidaInventario, TasaCambio, Usuario, Venta
+from .models import CobroBinance, Compra, EntradaInventario, LoteCompra, Producto, SalidaInventario, TasaCambio, Usuario, Venta
 
 
 @admin.register(Usuario)
@@ -69,4 +69,29 @@ class CobroBinanceAdmin(admin.ModelAdmin):
     readonly_fields = [f.name for f in CobroBinance._meta.fields]
 
     def has_add_permission(self, request):
+        return False
+
+
+class LoteCompraInline(admin.TabularInline):
+    model = LoteCompra
+    extra = 0
+    can_delete = False
+    readonly_fields = ('producto', 'cantidad', 'disponible', 'costo_unitario', 'precio_previsto', 'margen_previsto')
+
+
+@admin.register(Compra)
+class CompraAdmin(admin.ModelAdmin):
+    """Solo consulta: las compras se registran, pagan y anulan desde la app."""
+    list_display = ('id', 'fecha', 'proveedor', 'total_factura', 'forma_pago', 'plazo_meses', 'vence', 'pagada',
+                    'anulada')
+    list_filter = ('pagada', 'anulada', 'forma_pago')
+    inlines = [LoteCompraInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
