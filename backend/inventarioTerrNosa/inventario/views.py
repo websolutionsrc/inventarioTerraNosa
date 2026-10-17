@@ -549,6 +549,14 @@ class RentabilidadViewSet(viewsets.ViewSet):
     def articulos(self, request):
         return Response(_como_texto(rentabilidad.articulos(self._ctx(request))))
 
+    @action(detail=False, methods=['get'])
+    def graficos(self, request):
+        try:
+            meses = min(24, max(3, int(request.query_params.get('meses', 6))))
+        except ValueError:
+            meses = 6
+        return Response(_como_texto(rentabilidad.graficos(self._ctx(request), meses)))
+
     @action(detail=False, methods=['patch'])
     def ajustes(self, request):
         ajustes = AjustesNegocio.actuales()

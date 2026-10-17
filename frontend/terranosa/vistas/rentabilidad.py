@@ -6,11 +6,11 @@ from datetime import date, timedelta
 
 from PyQt5.QtCore import QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QPainter
-from PyQt5.QtWidgets import (QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QScrollArea, QSplitter,
-                             QStackedWidget,
-                             QTabWidget, QVBoxLayout, QWidget, QFrame)
+from PyQt5.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout, QLineEdit, QScrollArea,
+                             QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from .. import formato, tema
+from ..graficos import BarrasAgrupadas, BarrasHorizontales, Lineas, nombre_mes
 from ..tareas import ejecutar
 from ..widgets import Columna, Tabla, Tarjeta, TarjetaCifra, boton, etiqueta, mostrar_error
 from .base import Pagina
@@ -39,6 +39,10 @@ def _color(valor, objetivo):
     if v >= objetivo - 10:
         return tema.AMBAR
     return tema.ROJO
+
+
+def _dolares_eje(valor):
+    return '{} $'.format(formato.numero(valor, 0))
 
 
 def _fecha(iso):
@@ -368,6 +372,7 @@ class PaginaRentabilidad(Pagina):
         self.pestanas.addTab(self._resumen(), 'Resumen')
         self.pestanas.addTab(self._lotes(), 'Lotes')
         self.pestanas.addTab(self._articulos(), 'Por artículo')
+        self.pestanas.addTab(self._graficos(), 'Gráficos')
         capa.addWidget(self.pestanas, 1)
         return panel
 
@@ -467,6 +472,233 @@ class PaginaRentabilidad(Pagina):
             return None
         return tema.AMBAR if _d(a['precio']) < _d(a['precio_sugerido']) else tema.VERDE
 
+    # --- Gráficos ---
+
+    def _tarjeta_grafico(self, titulo, explicacion, grafico, conclusion):
+        t = Tarjeta(18)
+        t.capa.setSpacing(6)
+        t.capa.addWidget(etiqueta(titulo, 'seccion'))
+        t.capa.addWidget(etiqueta(explicacion, 'subtitulo', ajustar=True))
+        t.capa.addSpacing(8)
+        t.capa.addWidget(grafico)
+        conclusion.setTextFormat(Qt.RichText)
+        conclusion.setWordWrap(True)
+        t.capa.addWidget(conclusion)
+        t.capa.addStretch()
+        return t
+
+    def _graficos(self):
+        contenido = QWidget()
+        contenido.setObjectName('lienzo')
+        capa = QGridLayout(contenido)
+        capa.setContentsMargins(0, 8, 10, 8)
+        capa.setHorizontalSpacing(14)
+        capa.setVerticalSpacing(14)
+
+        fila = QHBoxLayout()
+        fila.addWidget(etiqueta('Mostrar'))
+        self.meses_graficos = QComboBox()
+        for texto, n in (('los últimos 3 meses', 3), ('los últimos 6 meses', 6), ('los últimos 12 meses', 12)):
+            self.meses_graficos.addItem(texto, n)
+        self.meses_graficos.setCurrentIndex(1)
+        self.meses_graficos.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.meses_graficos.currentIndexChanged.connect(lambda *_: self._cargar_graficos())
+        fila.addWidget(self.meses_graficos)
+        fila.addStretch()
+        fila.addWidget(etiqueta('Pasa el ratón por encima de los gráficos para ver el detalle.', 'subtitulo'))
+        capa.addLayout(fila, 0, 0, 1, 2)
+
+        self.g_meses = BarrasAgrupadas(_dolares_eje, alto=270)
+        self.t_meses = etiqueta('')
+        capa.addWidget(self._tarjeta_grafico(
+            'Ganancia por mes', 'Lo vendido de artículos con compra registrada, lo que te quedó después de pagar al '
+            'proveedor y lo que se llevó la brecha. Encima de cada mes: de cada 100 $ vendidos, cuánto te quedó.',
+            self.g_meses, self.t_meses), 1, 0, 1, 2)
+
+        self.g_tasas = Lineas(lambda v: formato.numero(v, 0), alto=240)
+        self.t_tasas = etiqueta('')
+        capa.addWidget(self._tarjeta_grafico(
+            'La brecha, día a día', 'Tasa BCV, tasa USDT (Binance) y la tasa media a la que cobraste en bolívares '
+            'cada día, en Bs por dólar. Cuanto más se separan, más pierden los bolívares que cobras.',
+            self.g_tasas, self.t_tasas), 2, 0, 1, 2)
+
+        self.g_metodos = BarrasHorizontales()
+        self.t_metodos = etiqueta('')
+        capa.addWidget(self._tarjeta_grafico(
+            'Cómo te pagan', 'Todo lo vendido, por método de pago. Celeste: bolívares · verde: dólares · '
+            'ámbar: USDT.', self.g_metodos, self.t_metodos), 3, 0)
+
+        self.g_articulos = BarrasHorizontales()
+        self.t_articulos = etiqueta('')
+        capa.addWidget(self._tarjeta_grafico(
+            'Qué artículos dejan más', 'Ganancia real de cada artículo con compra registrada. El color es su '
+            'margen frente al objetivo.', self.g_articulos, self.t_articulos), 3, 1)
+
+        self.g_pagos = BarrasAgrupadas(_dolares_eje, alto=230)
+        self.t_pagos = etiqueta('')
+        capa.addWidget(self._tarjeta_grafico(
+            'Pagos a proveedores que vienen', 'Lo que vence cada mes, en dólares (lo ya vencido cuenta en este '
+            'mes), frente a lo que vendes en un mes normal.', self.g_pagos, self.t_pagos), 4, 0, 1, 2)
+        capa.setColumnStretch(0, 1)
+        capa.setColumnStretch(1, 1)
+        capa.setRowStretch(5, 1)
+
+        desplazable = QScrollArea()
+        desplazable.setWidget(contenido)
+        desplazable.setWidgetResizable(True)
+        desplazable.setFrameShape(QFrame.NoFrame)
+        desplazable.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        desplazable.viewport().setObjectName('lienzo')
+        desplazable.setStyleSheet('QScrollArea, QWidget#lienzo { background: transparent; }')
+        return desplazable
+
+    def _pintar_graficos(self, d):
+        objetivo = self.objetivo
+        self._pintar_meses(d['por_mes'], objetivo)
+        self._pintar_tasas(d['tasas'])
+        self._pintar_metodos(d['metodos'])
+        self._pintar_articulos(d['articulos'], objetivo)
+        self._pintar_pagos(d['pagos'], _d(d.get('venta_media_mensual')))
+
+    def _pintar_meses(self, meses, objetivo):
+        categorias = [nombre_mes(m['mes']) for m in meses]
+        anios = [m['mes'][:4] if (i == 0 or m['mes'].endswith('-01')) else '' for i, m in enumerate(meses)]
+        valores = [[float(_d(m['vendido']) or 0), float(_d(m['ganancia']) or 0), float(_d(m['brecha']) or 0)]
+                   for m in meses]
+        encima = [('{} $'.format(formato.numero(m['margen'], 0)), _color(m['margen'], objetivo))
+                  if m.get('margen') else None for m in meses]
+        consejos = []
+        for m in meses:
+            texto = '<b>{}</b>'.format(nombre_mes(m['mes'], con_anio=True))
+            if m.get('margen'):
+                texto += ('<br>Vendido (con compra): {}<br>Te quedó: {} · de cada 100 $, {} $'
+                          '<br>Se llevó la brecha: {}').format(
+                    formato.dinero(m['vendido']), formato.dinero(m['ganancia']), formato.numero(m['margen'], 0),
+                    formato.dinero(m['brecha']))
+            texto += '<br>Todas las ventas: {} en {} ventas'.format(formato.dinero(m['vendido_total']), m['ventas'])
+            consejos.append(texto)
+        self.g_meses.poner([('Vendido', '#BFD7EA'), ('Te quedó', tema.VERDE), ('Se llevó la brecha', '#E39A92')],
+                           categorias, valores, anios, encima, consejos)
+        con_margen = [m for m in meses if m.get('margen')]
+        if not con_margen:
+            self.t_meses.setText('')
+        elif len(con_margen) == 1:
+            m = con_margen[0]
+            self.t_meses.setText('En {}, de cada 100 $ vendidos te quedaron <b>{} $</b>.'.format(
+                MESES[int(m['mes'][5:]) - 1], formato.numero(m['margen'], 0)))
+        else:
+            mejor = max(con_margen, key=lambda m: _d(m['margen']))
+            peor = min(con_margen, key=lambda m: _d(m['margen']))
+            self.t_meses.setText(
+                'Tu mejor mes fue <b>{}</b>: de cada 100 $ te quedaron {} $. El más flojo, {}: {} $.'.format(
+                    MESES[int(mejor['mes'][5:]) - 1], formato.numero(mejor['margen'], 0),
+                    MESES[int(peor['mes'][5:]) - 1], formato.numero(peor['margen'], 0)))
+
+    def _pintar_tasas(self, tasas):
+        def serie(campo):
+            return [float(t[campo]) if t.get(campo) else None for t in tasas]
+
+        def separacion(t):
+            bcv, usdt = _d(t.get('bcv')), _d(t.get('usdt'))
+            return (usdt / bcv - 1) * 100 if bcv and usdt else None
+
+        etiquetas = ['{}/{}'.format(t['fecha'][8:10], t['fecha'][5:7]) for t in tasas]
+        detalles = []
+        for t in tasas:
+            lineas = ['<b>{}</b>'.format(_fecha(t['fecha']))]
+            for nombre, campo in (('BCV', 'bcv'), ('USDT', 'usdt'), ('Cobrada en Bs', 'cobrada')):
+                if t.get(campo):
+                    lineas.append('{}: {} Bs/$'.format(nombre, formato.numero(t[campo])))
+            sep = separacion(t)
+            if sep is not None:
+                lineas.append('El USDT, un {} % por encima del BCV'.format(formato.numero(sep, 1)))
+            detalles.append('<br>'.join(lineas))
+        self.g_tasas.poner([('BCV', tema.MARINO, serie('bcv')), ('USDT', tema.AMBAR, serie('usdt')),
+                            ('Cobrada en Bs', tema.CELESTE, serie('cobrada'))], etiquetas, detalles)
+        con_ambas = [t for t in tasas if separacion(t) is not None]
+        partes = []
+        if con_ambas:
+            ultima, primera = con_ambas[-1], con_ambas[0]
+            partes.append('El <b>{}</b> el USDT estaba un <b>{} %</b> por encima del BCV'.format(
+                _fecha(ultima['fecha']), formato.numero(separacion(ultima), 1)))
+            if primera is not ultima:
+                partes[-1] += ' (el {}, un {} %)'.format(_fecha(primera['fecha']),
+                                                         formato.numero(separacion(primera), 1))
+            partes[-1] += '.'
+        cobradas = [_d(t['cobrada']) for t in tasas if t.get('cobrada')]
+        if cobradas:
+            partes.append('Cobraste en bolívares a una media de {} Bs/$.'.format(
+                formato.numero(sum(cobradas) / len(cobradas))))
+        self.t_tasas.setText(' '.join(partes))
+
+    def _pintar_metodos(self, metodos):
+        colores = {'VES': tema.CELESTE, 'USD': tema.VERDE, 'USDT': tema.AMBAR}
+        filas = [(m['nombre'], float(_d(m['total'])), colores.get(m['moneda'], tema.MARINO),
+                  '{} · {} %'.format(formato.dinero(m['total']), formato.numero(m['porcentaje'] or 0, 0)),
+                  '{}: {} en {} ventas'.format(m['nombre'], formato.dinero(m['total']), m['ventas']))
+                 for m in metodos]
+        self.g_metodos.poner(filas)
+        en_bs = sum((_d(m['porcentaje']) or 0 for m in metodos if m['moneda'] == 'VES'), 0)
+        self.t_metodos.setText('El <b>{} %</b> de lo vendido entró en bolívares.'.format(formato.numero(en_bs, 0))
+                               if metodos else '')
+
+    def _pintar_articulos(self, articulos, objetivo):
+        mostrar = articulos if len(articulos) <= 10 else articulos[:5] + articulos[-5:]
+        filas = [(a['nombre'], float(_d(a['ganancia'])), _color(a['margen'], objetivo),
+                  '{} · {}'.format(formato.dinero(a['ganancia']), _pct(a['margen'], 0)),
+                  '{}<br>{} uds · vendido {} · ganancia {} · margen {}'.format(
+                      a['nombre'], a['unidades'], formato.dinero(a['vendido']), formato.dinero(a['ganancia']),
+                      _pct(a['margen'], 0)))
+                 for a in mostrar]
+        self.g_articulos.poner(filas)
+        if not articulos:
+            self.t_articulos.setText('')
+            return
+        texto = 'El que más deja: <b>{}</b> ({}).'.format(articulos[0]['nombre'],
+                                                           formato.dinero(articulos[0]['ganancia']))
+        bajos = [a['nombre'] for a in articulos if a.get('margen') and _d(a['margen']) < objetivo]
+        if bajos:
+            texto += ' <span style="color:{}">Por debajo del objetivo: {}.</span>'.format(tema.AMBAR, ', '.join(bajos))
+        if len(articulos) > 10:
+            texto += ' Se muestran los 5 que más y los 5 que menos dejan.'
+        self.t_articulos.setText(texto)
+
+    def _pintar_pagos(self, pagos, venta_media):
+        valores = [[float(_d(p['a_pagar']) or 0)] for p in pagos]
+        encima = [(formato.dinero(p['a_pagar']), tema.AMBAR if venta_media and _d(p['a_pagar']) > venta_media
+                   else tema.TEXTO) if _d(p['a_pagar']) else None for p in pagos]
+        consejos = ['<b>{}</b><br>Vence: {} ({} compra{})'.format(
+            nombre_mes(p['mes'], con_anio=True), formato.dinero(p['a_pagar']), p['compras'],
+            '' if p['compras'] == 1 else 's') for p in pagos]
+        referencia = ((float(venta_media), 'Vendes unos {} al mes'.format(_dolares_eje(venta_media)))
+                      if venta_media else None)
+        self.g_pagos.vacio = 'No hay pagos pendientes a proveedores en estos meses.'
+        self.g_pagos.poner([('A pagar', tema.AMBAR)], [nombre_mes(p['mes']) for p in pagos], valores,
+                           [p['mes'][:4] if (i == 0 or p['mes'].endswith('-01')) else '' for i, p in enumerate(pagos)],
+                           encima, consejos, referencia)
+        con_pago = [p for p in pagos if _d(p['a_pagar'])]
+        if not con_pago:
+            self.t_pagos.setText('')
+            return
+        p = con_pago[0]
+        mes, monto = MESES[int(p['mes'][5:]) - 1], _d(p['a_pagar'])
+        if venta_media and monto > venta_media:
+            texto = ('<span style="color:{}">En <b>{}</b> vencen {}, más de lo que vendes en un mes: conviene ir '
+                     'apartando.</span>').format(tema.AMBAR, mes, formato.dinero(monto))
+        elif venta_media:
+            texto = 'En <b>{}</b> vencen {}: el {} % de lo que vendes en un mes.'.format(
+                mes, formato.dinero(monto), formato.numero(monto / venta_media * 100, 0))
+        else:
+            texto = 'En <b>{}</b> vencen {}.'.format(mes, formato.dinero(monto))
+        self.t_pagos.setText(texto)
+
+    def _cargar_graficos(self):
+        if not self.api.panel_abierto:
+            return
+        api, params, meses = self.api, self._params(), self.meses_graficos.currentData()
+        ejecutar(lambda: api.rentabilidad('graficos', meses=meses, **params),
+                 al_terminar=self._pintar_graficos, al_fallar=self._fallo_carga, widget=self)
+
     # --- Datos ---
 
     def _params(self):
@@ -501,8 +733,10 @@ class PaginaRentabilidad(Pagina):
             if not t.modelo.rowCount():
                 t.poner_cargando()
         desde, hasta = self._rango()
+        meses = self.meses_graficos.currentData()
         ejecutar(lambda: (api.rentabilidad('resumen', desde=desde.isoformat(), hasta=hasta.isoformat(), **params),
-                          api.rentabilidad('lotes', **params), api.rentabilidad('articulos', **params)),
+                          api.rentabilidad('lotes', **params), api.rentabilidad('articulos', **params),
+                          api.rentabilidad('graficos', meses=meses, **params)),
                  al_terminar=self._cargado, al_fallar=self._fallo_carga, widget=self)
 
     def _cargar_resumen(self):
@@ -523,8 +757,9 @@ class PaginaRentabilidad(Pagina):
         self.error(error)
 
     def _cargado(self, datos):
-        resumen, lotes, articulos = datos
+        resumen, lotes, articulos, graficos = datos
         self._pintar_resumen(resumen)
+        self._pintar_graficos(graficos)
         self.tabla_lotes.poner_filas(lotes)
         if self.tabla_lotes.fila_seleccionada() is None and lotes:
             self.tabla_lotes.selectRow(0)

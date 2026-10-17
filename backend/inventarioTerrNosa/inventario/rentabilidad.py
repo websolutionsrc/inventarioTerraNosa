@@ -22,7 +22,7 @@ from decimal import Decimal
 from django.utils import timezone
 
 from . import services
-from .models import AjustesNegocio, AsignacionLote, Compra, LoteCompra, Producto, Venta
+from .models import AjustesNegocio, AsignacionLote, Compra, LoteCompra, Producto, TasaCambio, Venta
 
 CERO = Decimal('0')
 CIEN = Decimal('100')
@@ -267,3 +267,128 @@ def articulos(ctx):
             ('vendidas', vendidas), ('precio_sugerido', _q(sugerido)),
         ]))
     return resultado
+
+
+def _meses(hoy, cuantos):
+    """Los últimos `cuantos` meses (año, mes), del más antiguo al actual."""
+    lista = []
+    anio, mes = hoy.year, hoy.month
+    for _ in range(cuantos):
+        lista.insert(0, (anio, mes))
+        anio, mes = (anio - 1, 12) if mes == 1 else (anio, mes - 1)
+    return lista
+
+
+def _clave_mes(fecha):
+    return '{:04d}-{:02d}'.format(fecha.year, fecha.month)
+
+
+def _media(valores):
+    valores = [v for v in valores if v]
+    return sum(valores, CERO) / len(valores) if valores else None
+
+
+def graficos(ctx, meses=6):
+    """Datos para los gráficos del panel: por mes, tasas, métodos de pago, artículos y pagos que vienen."""
+    hoy = timezone.localdate()
+    lista = _meses(hoy, meses)
+    desde = hoy.replace(year=lista[0][0], month=lista[0][1], day=1)
+    inicio = services.rango_del_dia(desde)[0]
+    fin = services.rango_del_dia(hoy)[1]
+
+    por_mes = OrderedDict(('{:04d}-{:02d}'.format(a, m), dict(vendido=CERO, ganancia=CERO, brecha=CERO,
+                                                              vendido_total=CERO, ventas=0))
+                          for a, m in lista)
+    por_articulo = {}
+    calculos = {}
+    for a in _asignaciones_de_venta(AsignacionLote.objects.filter(
+            linea_venta__venta__fecha__gte=inicio, linea_venta__venta__fecha__lt=fin)):
+        if a.lote_id not in calculos:
+            calculos[a.lote_id] = Lote(a.lote, ctx)
+        v = calculos[a.lote_id].venta(a)
+        mes = por_mes[_clave_mes(timezone.localtime(v['fecha']))]
+        mes['vendido'] += v['vendido']
+        mes['ganancia'] += v['ganancia'] or CERO
+        mes['brecha'] += v['brecha']
+        art = por_articulo.setdefault(a.lote.producto_id, dict(nombre=a.lote.producto.nombre, vendido=CERO,
+                                                               ganancia=CERO, unidades=0))
+        art['vendido'] += v['vendido']
+        art['ganancia'] += v['ganancia'] or CERO
+        art['unidades'] += v['cantidad']
+
+    # Todas las ventas (también las de artículos sin compra registrada)
+    metodos = OrderedDict()
+    tasas_venta = {}
+    ventas = Venta.objects.filter(anulada=False, fecha__gte=inicio, fecha__lt=fin).order_by('fecha')
+    for venta in ventas:
+        dia = timezone.localtime(venta.fecha).date()
+        mes = por_mes[_clave_mes(dia)]
+        mes['vendido_total'] += venta.total
+        mes['ventas'] += 1
+        m = metodos.setdefault(venta.metodo_pago, dict(metodo=venta.metodo_pago, nombre=venta.get_metodo_pago_display(),
+                                                      moneda=Venta.moneda_de(venta.metodo_pago), total=CERO,
+                                                      ventas=0))
+        m['total'] += venta.total
+        m['ventas'] += 1
+        t = tasas_venta.setdefault(dia, dict(bcv=[], usdt=[], cobrada=[]))
+        for campo, valor in (('bcv', venta.tasa_bcv), ('usdt', venta.tasa_usdt), ('cobrada', venta.tasa_cambio)):
+            if valor:
+                t[campo].append(valor)
+
+    # Tasas por día: las consultadas ese día y, si faltan, las que guardaron las ventas
+    consultadas = {}
+    for t in TasaCambio.objects.filter(fecha_valor__gte=desde).order_by('fecha_valor'):
+        # El BCV publica con fecha valor del próximo día hábil: esa ya es la de hoy
+        consultadas[(t.fuente, min(t.fecha_valor, hoy))] = t.compra
+    tasas = []
+    dia = desde
+    while dia <= hoy:
+        de_ventas = tasas_venta.get(dia, {})
+        bcv = consultadas.get(('bcv', dia)) or _media(de_ventas.get('bcv', []))
+        usdt = consultadas.get(('binance', dia)) or _media(de_ventas.get('usdt', []))
+        cobrada = _media(de_ventas.get('cobrada', []))
+        if bcv or usdt or cobrada:
+            tasas.append(OrderedDict([('fecha', dia), ('bcv', _q(bcv)), ('usdt', _q(usdt)), ('cobrada', _q(cobrada))]))
+        dia += timedelta(days=1)
+
+    total_metodos = sum((m['total'] for m in metodos.values()), CERO)
+    metodos_lista = sorted(metodos.values(), key=lambda m: -m['total'])
+    for m in metodos_lista:
+        m['total'] = _q(m['total'])
+        m['porcentaje'] = _pct(m['total'] / total_metodos * CIEN) if total_metodos else None
+
+    articulos_lista = []
+    for art in sorted(por_articulo.values(), key=lambda x: -x['ganancia']):
+        articulos_lista.append(OrderedDict([
+            ('nombre', art['nombre']), ('unidades', art['unidades']), ('vendido', _q(art['vendido'])),
+            ('ganancia', _q(art['ganancia'])),
+            ('margen', _pct(art['ganancia'] / art['vendido'] * CIEN) if art['vendido'] else None)]))
+
+    # Pagos a proveedores que vienen (lo vencido cuenta en el mes actual) frente a lo que se vende al mes
+    proximos = _meses(services.sumar_meses(hoy, 5), 6)
+    pagos = OrderedDict(('{:04d}-{:02d}'.format(a, m), dict(a_pagar=CERO, compras=0)) for a, m in proximos)
+    for compra in Compra.objects.filter(pagada=False, anulada=False):
+        clave = max(_clave_mes(compra.vence or hoy), _clave_mes(hoy))
+        if clave in pagos:
+            total = compra.total_factura
+            if compra.en_bolivares_fijos:
+                total = total / ctx.usdt if ctx.usdt else CERO
+            pagos[clave]['a_pagar'] += total
+            pagos[clave]['compras'] += 1
+    completos = [m['vendido_total'] for clave, m in por_mes.items() if clave != _clave_mes(hoy) and m['ventas']]
+    venta_media = _media(completos[-3:]) or (por_mes[_clave_mes(hoy)]['vendido_total'] or None)
+
+    return OrderedDict([
+        ('desde', desde), ('hasta', hoy), ('margen_objetivo', ctx.objetivo),
+        ('por_mes', [OrderedDict([
+            ('mes', clave), ('vendido', _q(m['vendido'])), ('ganancia', _q(m['ganancia'])),
+            ('margen', _pct(m['ganancia'] / m['vendido'] * CIEN) if m['vendido'] else None),
+            ('brecha', _q(m['brecha'])), ('vendido_total', _q(m['vendido_total'])), ('ventas', m['ventas'])])
+            for clave, m in por_mes.items()]),
+        ('tasas', tasas),
+        ('metodos', metodos_lista),
+        ('articulos', articulos_lista),
+        ('pagos', [OrderedDict([('mes', clave), ('a_pagar', _q(p['a_pagar'])), ('compras', p['compras'])])
+                   for clave, p in pagos.items()]),
+        ('venta_media_mensual', _q(venta_media)),
+    ])

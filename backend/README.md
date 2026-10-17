@@ -79,6 +79,7 @@ cd inventarioTerrNosa
 | `GET rentabilidad/resumen/` | Admin + PIN | De cada 100 $ vendidos, ganancia real, brecha, pendiente de pagar y próximo vencimiento (`?desde=&hasta=`, por defecto el mes en curso) |
 | `GET rentabilidad/lotes/` y `lotes/{id}/` | Admin + PIN | Lotes con margen estimado y real (`?estado=pendiente\|pagado\|cerrado`); la ficha trae el detalle venta por venta |
 | `GET rentabilidad/articulos/` | Admin + PIN | Por artículo: costo último, margen estimado y real, vendidas y precio sugerido para el margen objetivo |
+| `GET rentabilidad/graficos/` | Admin + PIN | Datos de los gráficos (`?meses=3..24`, 6 por defecto): por mes (vendido, ganancia, margen, brecha, ventas), tasas BCV/USDT/cobrada por día, ventas por método de pago, ganancia por artículo, pagos a proveedores de los próximos 6 meses y venta media mensual |
 | `PATCH rentabilidad/ajustes/` | Admin + PIN | `{margen_objetivo}` |
 
 ## Compras y lotes
@@ -105,6 +106,8 @@ cd inventarioTerrNosa
 - Las unidades perdidas en ajustes restan su costo. La **brecha** de una venta en Bs es precio en $ −
   Bs ÷ tasa USDT de ese día (solo como medida).
 - Todo se calcula al pedirlo; no hay resultados guardados que puedan quedar desfasados.
+- La "última tasa" de cada fuente es la de **fecha valor** más reciente (el BCV publica la del próximo
+  día hábil), no la última consultada: cargar historia antigua no cambia la tasa de hoy.
 
 ## Cobros con Binance Pay verificados
 

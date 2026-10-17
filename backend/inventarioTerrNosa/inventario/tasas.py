@@ -112,9 +112,11 @@ def _actualizar(fuente):
 
 def obtener(fuente, forzar=False):
     """Última tasa de una fuente: la refresca si tiene más de VIGENCIA. Nunca lanza errores de red."""
-    ultima = TasaCambio.objects.filter(fuente=fuente).order_by('-obtenida_en').first()
+    guardadas = TasaCambio.objects.filter(fuente=fuente)
+    ultima = guardadas.order_by('-fecha_valor', '-obtenida_en').first()  # la de fecha valor más reciente
+    consultada = guardadas.order_by('-obtenida_en').first()
     error = None
-    if forzar or ultima is None or timezone.now() - ultima.obtenida_en > VIGENCIA:
+    if forzar or consultada is None or timezone.now() - consultada.obtenida_en > VIGENCIA:
         try:
             ultima = _actualizar(fuente)
         except ErrorTasa as e:

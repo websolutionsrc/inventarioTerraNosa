@@ -826,3 +826,36 @@ class RentabilidadTests(BaseAPI):
         r = self.client.patch('/api/rentabilidad/ajustes/', {'margen_objetivo': '50'}, format='json')
         self.assertEqual(r.data['margen_objetivo'], '50')
         self.assertEqual(self.client.get('/api/rentabilidad/lotes/').status_code, 200)
+
+    def test_la_ultima_tasa_es_la_de_fecha_valor_mas_reciente(self):
+        from .models import TasaCambio
+        from . import services
+        # Una tasa antigua guardada después (p. ej. al cargar historia) no pasa a ser "la de hoy"
+        TasaCambio.objects.create(fuente='bcv', fecha_valor=timezone.localdate() - timedelta(days=30),
+                                  compra=Decimal('700'), venta=Decimal('700'))
+        self.assertEqual((services.ultima_tasa_bcv(), services.ultima_tasa_usdt()), (Decimal('880'), Decimal('1000')))
+
+    def test_graficos(self):
+        self.vender_en_bs('880')
+        self.como(self.encargado)
+        self.vender([{'producto': self.bolso.id, 'cantidad': 1}], metodo='efectivo_usd')  # stock sin compra
+        self.entrar()
+        r = self.client.get('/api/rentabilidad/graficos/').data
+        self.assertEqual(len(r['por_mes']), 6)
+        mes = r['por_mes'][-1]
+        # 1 − 10.000 / 22.000 = 54,5 % de 25 $; el bolso (sin compra) solo cuenta en lo vendido total
+        self.assertEqual((mes['vendido'], mes['ganancia'], mes['margen'], mes['vendido_total'], mes['ventas']),
+                         ('25.00', '13.64', '54.5', '43.00', 2))
+        self.assertEqual(r['tasas'][-1], {'fecha': timezone.localdate().isoformat(), 'bcv': '880.00',
+                                          'usdt': '1000.00', 'cobrada': '880.00'})
+        self.assertEqual([(m['metodo'], m['total'], m['porcentaje']) for m in r['metodos']],
+                         [('pago_movil', '25.00', '58.1'), ('efectivo_usd', '18.00', '41.9')])
+        self.assertEqual(r['articulos'], [{'nombre': 'Morral táctico', 'unidades': 1, 'vendido': '25.00',
+                                           'ganancia': '13.64', 'margen': '54.5'}])
+        # La compra vence a los 3 meses: cae en el cuarto mes de la lista de pagos
+        self.assertEqual([p['a_pagar'] for p in r['pagos']], ['0.00', '0.00', '0.00', '100.00', '0.00', '0.00'])
+        self.assertEqual(r['venta_media_mensual'], '43.00')  # aún no hay meses completos: el actual
+        self.assertEqual(len(self.client.get('/api/rentabilidad/graficos/?meses=12').data['por_mes']), 12)
+        self.assertEqual(len(self.client.get('/api/rentabilidad/graficos/?meses=x').data['por_mes']), 6)
+        self.client.credentials()
+        self.assertEqual(self.client.get('/api/rentabilidad/graficos/').status_code, 403)

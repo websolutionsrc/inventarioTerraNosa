@@ -32,13 +32,14 @@ def es_de_hoy(venta):
 
 def ultima_tasa_bcv():
     """Última tasa del BCV guardada (sin consultar la web: no debe frenar una venta)."""
-    tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).order_by('-obtenida_en').first()
+    tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BCV).order_by('-fecha_valor', '-obtenida_en').first()
     return tasa.venta if tasa else None
 
 
 def ultima_tasa_usdt():
     """Última tasa USDT guardada: lo que cuesta comprar un USDT en Binance P2P."""
-    tasa = TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BINANCE).order_by('-obtenida_en').first()
+    tasa = (TasaCambio.objects.filter(fuente=TasaCambio.Fuente.BINANCE)
+            .order_by('-fecha_valor', '-obtenida_en').first())
     return tasa.compra if tasa else None
 
 

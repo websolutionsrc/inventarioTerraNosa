@@ -32,7 +32,7 @@ un `config.ini` junto al programa (ver `config.ini.ejemplo`).
 | **Ventas de hoy** (F2) | Todos | Total del día y lo cobrado en Bs, número de ventas y totales por método de pago (con Bs). Detalle de cada venta, **Anular venta** (motivo obligatorio; el stock vuelve) y **Corregir** (anula y carga los productos en Vender) |
 | **Inventario** (F3) | Admin | Productos con stock bajo resaltado. Nuevo, editar (con motivo si cambia el precio), **nueva compra**, **ajustar stock** (con motivo), **historial** del artículo (precios y stock), desactivar y reactivar |
 | **Compras** (F4) | Admin | Lo comprado a proveedores, **pendiente de pagar** y próximo vencimiento. **Nueva compra** (contado o a pagar en N meses): artículos existentes o **nuevos**, que entran al inventario con su costo y **precio de venta**; ayuda opcional para poner ese precio según la brecha (precio sugerido y «Aplicar»); **ventana de confirmación** antes de registrar; **registrar pago** y anular |
-| **Rentabilidad** (F5) | Admin + PIN | Protegida con un **PIN de gerencia** (se crea la primera vez; se bloquea sola a los 15 min o con **Bloquear**). **Resumen**: de cada 100 $ vendidos cuánto quedó, ganancia real, lo que se llevó la brecha y pendiente de pagar, por periodo. **Lotes**: margen estimado frente a real y ficha de cada lote, explicada en palabras y venta por venta. **Por artículo**: precio sugerido para el margen objetivo (en ámbar si el precio actual está por debajo). Las compras pendientes se estiman a la tasa de su factura, USDT, BCV u otra |
+| **Rentabilidad** (F5) | Admin + PIN | Protegida con un **PIN de gerencia** (se crea la primera vez; se bloquea sola a los 15 min o con **Bloquear**). **Resumen**: de cada 100 $ vendidos cuánto quedó, ganancia real, lo que se llevó la brecha y pendiente de pagar, por periodo. **Lotes**: margen estimado frente a real y ficha de cada lote, explicada en palabras y venta por venta. **Por artículo**: precio sugerido para el margen objetivo (en ámbar si el precio actual está por debajo). **Gráficos** (3, 6 o 12 meses, con detalle al pasar el ratón y una frase que lo resume): ganancia por mes con la brecha, tasas BCV/USDT/cobrada día a día, cómo te pagan, qué artículos dejan más y pagos a proveedores frente a lo que se vende al mes. Las compras pendientes se estiman a la tasa de su factura, USDT, BCV u otra |
 | **Historial** (F6) | Admin | Ventas por fechas y filtros, **anuladas en rojo** con quién, cuándo y por qué. Totales y **exportación a CSV para Excel** |
 | **Usuarios** (F7) | Admin | Crear, cambiar contraseña o rol, desactivar |
 
@@ -49,6 +49,7 @@ terranosa/
   tema.py               colores de la marca, hoja de estilos e iconos SVG
   widgets.py            tablas, tarjetas, botones y diálogos de confirmación
   formato.py            importes (1.234,50 $) y fechas en español
+  graficos.py           gráficos dibujados con QPainter (barras, líneas y rankings), sin librerías extra
   vistas/               login, ventana principal y una pantalla por archivo
 recursos/               logos, icono y fuente Marcellus (los mismos de la web)
 ```

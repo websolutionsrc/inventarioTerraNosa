@@ -60,7 +60,11 @@ entero se calcula al vuelo (no se guarda aparte) y en el detalle venta por venta
 - **Por artículo**: costo, precio, margen estimado, margen real de sus lotes y precio mínimo
   sugerido para el margen objetivo (editable en el panel).
 
-## Fase 3 · Análisis avanzado (gráficos)
+## Fase 3 · Análisis avanzado (gráficos) ✅ (hecha el 17/10/2026)
+
+Pestaña **Gráficos** del panel. Se dibujan con QPainter (sin matplotlib ni QtCharts, para no
+engordar ni arriesgar la versión de Windows 7). Cada gráfico lleva una frase que lo resume y el
+detalle al pasar el ratón.
 
 Margen real por mes y por artículo, ventas por método de pago, evolución de la brecha BCV/USDT,
 artículos más y menos rentables, y pendiente de pagar frente a ventas.

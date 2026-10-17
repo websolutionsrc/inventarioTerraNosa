@@ -61,6 +61,7 @@ class Command(BaseCommand):
             Compra.objects.all().delete()
             Producto.objects.all().delete()
             AjustesNegocio.objects.all().delete()  # el PIN de gerencia se vuelve a crear desde la app
+            TasaCambio.objects.filter(fecha_valor__lt=timezone.localdate()).delete()  # historia de ejemplo
         elif Producto.objects.exists():
             raise CommandError('Ya hay productos. Usa --borrar para empezar de cero.')
 
@@ -91,6 +92,34 @@ class Command(BaseCommand):
         p = {i: prod.id for i, prod in enumerate(productos)}
         hoy = timezone.localdate()
 
+        # Historia de tasas de los últimos 100 días (para los gráficos), que acaba en la de hoy
+        bcv_hoy, usdt_hoy = services.ultima_tasa_bcv(), services.ultima_tasa_usdt()
+
+        def bcv(dias):
+            return (bcv_hoy * (1 - Decimal('0.0011') * dias)).quantize(Decimal('0.0001'))
+
+        def usdt(dias):
+            return (usdt_hoy * (1 - Decimal('0.0016') * dias)).quantize(Decimal('0.0001'))
+
+        for dias in range(1, 101):
+            dia = hoy - timedelta(days=dias)
+            TasaCambio.objects.get_or_create(fuente=TasaCambio.Fuente.BCV, fecha_valor=dia,
+                                             defaults={'compra': bcv(dias), 'venta': bcv(dias)})
+            TasaCambio.objects.get_or_create(fuente=TasaCambio.Fuente.BINANCE, fecha_valor=dia,
+                                             defaults={'compra': usdt(dias), 'venta': usdt(dias) - 2})
+
+        # Una compra de hace 3 meses, pagada, con ventas repartidas en esos meses
+        services.registrar_compra(admin, [{'producto': p[14], 'cantidad': 30, 'costo_unitario': '3.20'}],
+                                  'bs_usdt', plazo_meses=0, fecha=hoy - timedelta(days=95),
+                                  proveedor='Importadora Caribe', pago={'tasa_pago': str(usdt(95))})
+        for dias in range(92, 4, -7):
+            metodo = ('pago_movil', 'efectivo_usd', 'punto', 'pago_movil')[dias % 4]
+            tasa = bcv(dias) + 5 if metodo != 'efectivo_usd' else None
+            v = services.registrar_venta(encargado, [{'producto': p[14], 'cantidad': 2}], metodo, 'tienda', tasa=tasa)
+            Venta.objects.filter(pk=v.pk).update(
+                fecha=timezone.now() - timedelta(days=dias), tasa_usdt=usdt(dias),
+                tasa_bcv=bcv(dias) if tasa else None)
+
         # Compras: una al contado (ya pagada) y otra a pagar en 3 meses
         services.registrar_compra(admin, [{'producto': p[1], 'cantidad': 10, 'costo_unitario': '18.00'}],
                                   'bs_usdt', plazo_meses=0, fecha=hoy - timedelta(days=20),
@@ -120,7 +149,8 @@ class Command(BaseCommand):
                                    (6, '925', 'pago_movil'), (3, None, 'binance')):
             v = services.registrar_venta(encargado, [{'producto': p[1], 'cantidad': 1}, {'producto': p[3], 'cantidad': 1}],
                                          metodo, 'tienda', tasa=Decimal(tasa) if tasa else None)
-            Venta.objects.filter(pk=v.pk).update(fecha=timezone.now() - timedelta(days=dias))
+            Venta.objects.filter(pk=v.pk).update(fecha=timezone.now() - timedelta(days=dias), tasa_usdt=usdt(dias),
+                                                 tasa_bcv=bcv(dias) if tasa else None)
 
         self.stdout.write(self.style.SUCCESS(
             f'Listo: {len(productos)} productos, {Compra.objects.count()} compras, {Venta.objects.count()} ventas '
