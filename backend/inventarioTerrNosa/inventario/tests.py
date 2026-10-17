@@ -616,14 +616,30 @@ class CompraTests(BaseAPI):
         self.como(self.admin)
         self.assertEqual(self.client.post('/api/compras/{}/anular/'.format(c['id'])).status_code, 400)
 
-    def test_usar_este_precio_cambia_el_precio_y_guarda_lo_previsto(self):
+    def test_el_precio_de_venta_de_la_compra_queda_en_el_articulo(self):
         c = self.comprar([{'producto': self.morral.id, 'cantidad': 2, 'costo_unitario': '10.00',
-                           'precio_previsto': '27.50', 'margen_previsto': '51.30', 'usar_precio': True},
-                          {'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '6.00',
-                           'precio_previsto': '30.00'}], plazo=3)
+                           'precio_venta': '27.50', 'precio_previsto': '27.50', 'margen_previsto': '51.30'},
+                          {'producto': self.bolso.id, 'cantidad': 1, 'costo_unitario': '6.00'}], plazo=3)
         self.recargar()
         self.assertEqual((self.morral.precio, self.bolso.precio), (Decimal('27.50'), Decimal('18.00')))
         self.assertEqual(c['lotes'][0]['margen_previsto'], '51.30')
+
+    def test_articulo_nuevo_entra_al_inventario_con_su_precio(self):
+        c = self.comprar([{'nuevo_nombre': 'Morral escolar azul', 'cantidad': 8, 'costo_unitario': '7.00',
+                           'precio_venta': '16.50'}], plazo=2)
+        nuevo = Producto.objects.get(nombre='Morral escolar azul')
+        self.assertEqual((nuevo.stock, nuevo.precio, nuevo.proveedor, nuevo.activo),
+                         (8, Decimal('16.50'), 'Proveedor X', True))
+        self.assertEqual(c['lotes'][0]['producto_nombre'], 'Morral escolar azul')
+        # Sin precio, o con un nombre que ya existe, no se registra
+        r = self.client.post('/api/compras/', {'lineas': [{'nuevo_nombre': 'Otro', 'cantidad': 1,
+                                                           'costo_unitario': '1'}]}, format='json')
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post('/api/compras/', {'lineas': [{'nuevo_nombre': 'morral nike',
+                                                           'cantidad': 1, 'costo_unitario': '1',
+                                                           'precio_venta': '5'}]}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(Producto.objects.filter(nombre='Otro').exists())
 
     def test_errores_y_permisos(self):
         r = self.client.post('/api/compras/', {'lineas': [{'producto': self.morral.id, 'cantidad': 1,

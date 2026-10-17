@@ -69,7 +69,7 @@ cd inventarioTerrNosa
 | `POST cobros-binance/` | Autenticado | `{lineas, canal}`: abre un cobro con Binance y devuelve el monto en USDT |
 | `GET cobros-binance/{id}/` | Autenticado | Mira en Binance si llegó el pago; al confirmarse trae la venta creada |
 | `POST cobros-binance/{id}/cancelar/` | Autenticado | Cancela el cobro si aún no se pagó |
-| `GET/POST compras/` | Admin | Compras con sus lotes (`?estado=pendientes\|pagadas\|anuladas`). Crear: `{proveedor, fecha, plazo_meses, forma_pago, lineas: [{producto, cantidad, costo_unitario, precio_previsto?, margen_previsto?, usar_precio?}], pago?}` |
+| `GET/POST compras/` | Admin | Compras con sus lotes (`?estado=pendientes\|pagadas\|anuladas`). Crear: `{proveedor, fecha, plazo_meses, forma_pago, lineas: [{producto o nuevo_nombre, cantidad, costo_unitario, precio_venta, precio_previsto?, margen_previsto?}], pago?}`. Los artículos nuevos se crean en el inventario |
 | `POST compras/{id}/pagar/` | Admin | Pago único: `{fecha, tasa_pago, bs_pagados}` (o `usd_pagados`) |
 | `POST compras/{id}/anular/` | Admin | Solo si no salió ninguna unidad |
 | `GET compras/previsiones/` | Admin | Tasas de hoy, ritmo de subida, % cobrado en $, pendiente de pagar y proveedores |

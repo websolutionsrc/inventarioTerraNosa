@@ -212,12 +212,20 @@ class CompraSerializer(serializers.ModelSerializer):
 
 
 class NuevaLineaCompraSerializer(serializers.Serializer):
-    producto = serializers.IntegerField()
+    """Un artículo existente ("producto") o uno nuevo ("nuevo_nombre", con precio de venta)."""
+    producto = serializers.IntegerField(required=False, allow_null=True)
+    nuevo_nombre = serializers.CharField(max_length=255, required=False, allow_blank=True)
     cantidad = serializers.IntegerField(min_value=1, max_value=99999)
     costo_unitario = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'))
+    precio_venta = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True,
+                                            min_value=Decimal('0.01'))
     precio_previsto = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     margen_previsto = serializers.DecimalField(max_digits=6, decimal_places=2, required=False, allow_null=True)
-    usar_precio = serializers.BooleanField(required=False, default=False)  # "Usar este precio"
+
+    def validate(self, datos):
+        if not datos.get('producto') and not (datos.get('nuevo_nombre') or '').strip():
+            raise serializers.ValidationError('Elige un artículo o escribe el nombre de uno nuevo.')
+        return datos
 
 
 class PagoCompraSerializer(serializers.Serializer):

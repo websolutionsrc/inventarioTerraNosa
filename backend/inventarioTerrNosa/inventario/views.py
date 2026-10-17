@@ -384,10 +384,8 @@ class CompraViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cre
         datos.is_valid(raise_exception=True)
         d = dict(datos.validated_data)
         lineas = [dict(l) for l in d.pop('lineas')]
-        precios = {int(l['producto']): l['precio_previsto'] for l in lineas
-                   if l.pop('usar_precio', False) and l.get('precio_previsto')}
         try:
-            compra = services.registrar_compra(request.user, lineas, precios=precios, **d)
+            compra = services.registrar_compra(request.user, lineas, **d)
         except services.ErrorNegocio as e:
             return _error(e)
         return Response(self.get_serializer(Compra.objects.get(pk=compra.pk)).data, status=status.HTTP_201_CREATED)

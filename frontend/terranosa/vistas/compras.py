@@ -7,7 +7,7 @@ from datetime import date
 
 from PyQt5.QtCore import QDate, QSize, Qt
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QCompleter, QDateEdit, QDialog,
+from PyQt5.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QCompleter, QDateEdit, QDialog,
                              QDoubleSpinBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QRadioButton,
                              QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
@@ -89,17 +89,44 @@ def _color_margen(valor, objetivo):
 
 # --- Nueva compra ----------------------------------------------------------------------
 
+def _redondear_precio(valor):
+    """Precio sugerido redondeado hacia arriba a 0,50 $ (precios de tienda)."""
+    medio = formato.decimal('0.5')
+    valor = formato.decimal(valor)
+    return (valor / medio).to_integral_value(rounding='ROUND_CEILING') * medio
+
+
+def _ajustar_columnas(tabla, estirar=0, fijas=None):
+    """
+    Columnas al ancho de su contenido y de su título (sin recortes); 'estirar' ocupa el resto.
+    Con estirar=None ninguna se estrecha: la última se alarga hasta el borde.
+    """
+    cab = tabla.horizontalHeader()
+    cab.setStretchLastSection(estirar is None)
+    for col in range(tabla.columnCount()):
+        if col == estirar:
+            cab.setSectionResizeMode(col, QHeaderView.Stretch)
+        elif fijas and col in fijas:
+            cab.setSectionResizeMode(col, QHeaderView.Fixed)
+            tabla.setColumnWidth(col, fijas[col])
+        else:
+            cab.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+
+
 class DialogoCompra(Dialogo):
-    """Registrar una compra. Con el apartado opcional de estimación de ganancia y precio."""
+    """
+    Registrar una compra: los artículos (existentes o nuevos) entran al inventario con su costo y su
+    precio de venta. El apartado opcional de estimación ayuda a decidir ese precio con la brecha.
+    """
 
     def __init__(self, parent, api, productos, previsiones, producto_inicial=None):
-        super(DialogoCompra, self).__init__(parent, 'Nueva compra', 'Registrar compra', ancho=1060)
+        super(DialogoCompra, self).__init__(parent, 'Nueva compra', 'Revisar y registrar', ancho=1060)
         self.api = api
         self.prev = previsiones or {}
-        self.productos = sorted((p for p in productos if p.get('activo', True)), key=lambda p: p['nombre'].lower())
-        self.por_id = {p['id']: p for p in self.productos}
-        self.lineas = []  # una por artículo: widgets de las dos tablas
-        self.setMinimumHeight(640)
+        self.productos = sorted(productos, key=lambda p: p['nombre'].lower())
+        self.por_nombre = {p['nombre'].strip().lower(): p for p in self.productos}
+        self.lineas = []
+        self.setMinimumHeight(660)
 
         contenido = QWidget()
         capa = QVBoxLayout(contenido)
@@ -108,6 +135,11 @@ class DialogoCompra(Dialogo):
         capa.addWidget(self._datos())
         capa.addWidget(etiqueta('ARTÍCULOS', 'etiqueta'))
         capa.addWidget(self._tabla_articulos())
+        pista = etiqueta('Elige un artículo de la lista o escribe el nombre de uno nuevo: se creará en el '
+                         'inventario. El precio de venta es el que tendrá el artículo al registrar la compra.',
+                         'subtitulo', ajustar=True)
+        pista.setStyleSheet('font-size: 8.5pt;')
+        capa.addWidget(pista)
         fila = QHBoxLayout()
         agregar = boton('Añadir artículo', 'mas', tipo='plano')
         agregar.clicked.connect(lambda: self._agregar_linea())
@@ -188,19 +220,15 @@ class DialogoCompra(Dialogo):
         return caja
 
     def _tabla_articulos(self):
-        t = self.tabla = QTableWidget(0, 5)
-        t.setHorizontalHeaderLabels(['Artículo', 'Cantidad', 'Costo unitario', 'Subtotal', ''])
+        t = self.tabla = QTableWidget(0, 6)
+        t.setHorizontalHeaderLabels(['Artículo', 'Cantidad', 'Costo unitario', 'Precio de venta', 'Subtotal', ''])
         t.verticalHeader().hide()
         t.verticalHeader().setDefaultSectionSize(42)
         t.setShowGrid(False)
         t.setSelectionMode(QAbstractItemView.NoSelection)
         t.setFocusPolicy(Qt.NoFocus)
         t.setMinimumHeight(170)
-        cab = t.horizontalHeader()
-        cab.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col, ancho in ((1, 96), (2, 140), (3, 110), (4, 34)):
-            cab.setSectionResizeMode(col, QHeaderView.Fixed)
-            t.setColumnWidth(col, ancho)
+        _ajustar_columnas(t, 0, {1: 100, 2: 145, 3: 145, 4: 120, 5: 34})
         return t
 
     def _pago_contado(self):
@@ -209,7 +237,7 @@ class DialogoCompra(Dialogo):
         fila.setContentsMargins(0, 0, 0, 0)
         fila.addWidget(etiqueta('Se paga hoy a'))
         self.tasa_contado = _decimal_spin(100000000, 2, ' Bs/$')
-        self.tasa_contado.setMinimumWidth(150)
+        self.tasa_contado.setMinimumWidth(160)
         self.tasa_contado.valueChanged.connect(self._recalcular)
         fila.addWidget(self.tasa_contado)
         self.bs_contado = etiqueta('', 'subtitulo')
@@ -218,7 +246,7 @@ class DialogoCompra(Dialogo):
         return self.caja_contado
 
     def _estimacion(self):
-        self.grupo_estimacion = QGroupBox('Estimar ganancia y precio (opcional)')
+        self.grupo_estimacion = QGroupBox('Ayuda para poner el precio de venta (opcional)')
         self.grupo_estimacion.setCheckable(True)
         self.grupo_estimacion.setChecked(False)
         self.grupo_estimacion.setStyleSheet(
@@ -249,6 +277,7 @@ class DialogoCompra(Dialogo):
         self.margen_obj.setValue(40)
         for w in (self.ritmo_usdt, self.ritmo_bcv, self.meses_venta, self.pct_dolares, self.margen_obj):
             w.valueChanged.connect(self._recalcular)
+            w.setFixedWidth(165)
 
         g = QGridLayout()
         g.setHorizontalSpacing(10)
@@ -261,11 +290,9 @@ class DialogoCompra(Dialogo):
         g.addWidget(self.meses_venta, 1, 1)
         g.addWidget(etiqueta('Cobrado en $ o USDT'), 1, 2)
         g.addWidget(self.pct_dolares, 1, 3)
-        g.addWidget(etiqueta('Margen objetivo'), 2, 0)
+        g.addWidget(etiqueta('Margen que quieres ganar'), 2, 0)
         g.addWidget(self.margen_obj, 2, 1)
         g.setColumnStretch(4, 1)
-        for w in (self.ritmo_usdt, self.ritmo_bcv, self.meses_venta, self.pct_dolares, self.margen_obj):
-            w.setFixedWidth(165)
         capa.addLayout(g)
         origen = []
         if p.get('ritmo_usdt') is None or p.get('ritmo_bcv') is None:
@@ -276,14 +303,13 @@ class DialogoCompra(Dialogo):
         nota.setStyleSheet('font-size: 8.5pt;')
         capa.addWidget(nota)
 
-        t = self.tabla_estimacion = QTableWidget(0, 8)
-        t.setHorizontalHeaderLabels(['Artículo', 'Costo', 'Precio venta', 'Estimado', 'Con brecha',
-                                     'Escenarios', 'Precio mín.', 'Usar'])
-        for col, consejo in ((3, 'Solo costo y precio, sin tasas'),
-                             (4, 'Con la tasa a la que pagarás y la tasa media a la que venderás'),
-                             (5, 'Margen con la brecha si no cambia / si sigue como va / si se agranda'),
-                             (6, 'Precio para conseguir el margen objetivo'),
-                             (7, 'Poner ese precio de venta al artículo')):
+        t = self.tabla_estimacion = QTableWidget(0, 7)
+        t.setHorizontalHeaderLabels(['Artículo', 'Costo', 'Margen estimado', 'Con la brecha', 'Escenarios',
+                                     'Precio sugerido', ''])
+        for col, consejo in ((2, 'Solo compara costo y precio de venta, sin tasas'),
+                             (3, 'Con la tasa a la que pagarás al proveedor y la tasa media a la que venderás'),
+                             (4, 'Margen con la brecha: si no cambia / si sigue como va / si se agranda'),
+                             (5, 'Precio para ganar el margen que quieres (redondeado hacia arriba a 0,50 $)')):
             t.horizontalHeaderItem(col).setToolTip(consejo)
         t.verticalHeader().hide()
         t.verticalHeader().setDefaultSectionSize(40)
@@ -291,15 +317,11 @@ class DialogoCompra(Dialogo):
         t.setSelectionMode(QAbstractItemView.NoSelection)
         t.setFocusPolicy(Qt.NoFocus)
         t.setMinimumHeight(150)
-        cab = t.horizontalHeader()
-        cab.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col, ancho in ((1, 80), (2, 116), (3, 86), (4, 100), (5, 170), (6, 100), (7, 44)):
-            cab.setSectionResizeMode(col, QHeaderView.Fixed)
-            t.setColumnWidth(col, ancho)
+        _ajustar_columnas(t, 4, {6: 92})
         capa.addWidget(t)
-        ayuda = etiqueta('«Estimado» solo compara costo y precio. «Con la brecha» tiene en cuenta a qué tasa pagarás '
-                         'al proveedor y a qué tasa media venderás. «Precio mínimo» es el que da el margen objetivo. '
-                         'Marca «Usar» para poner ese precio de venta al artículo.', 'subtitulo', ajustar=True)
+        ayuda = etiqueta('Los márgenes usan el precio de venta de arriba (Artículos). «Aplicar» pone ahí el '
+                         'precio sugerido; puedes cambiarlo a mano y la estimación se recalcula.', 'subtitulo',
+                         ajustar=True)
         ayuda.setStyleSheet('font-size: 8.5pt;')
         capa.addWidget(ayuda)
         return self.grupo_estimacion
@@ -312,18 +334,23 @@ class DialogoCompra(Dialogo):
         combo = QComboBox()
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.NoInsert)
-        combo.addItem('', None)
+        combo.addItem('')
         for p in self.productos:
-            combo.addItem(p['nombre'], p['id'])
+            combo.addItem(p['nombre'] + ('' if p.get('activo', True) else '  (desactivado)'), p['id'])
+        combo.lineEdit().setPlaceholderText('Artículo o nombre de uno nuevo')
         completador = QCompleter(combo.model(), combo)
         completador.setFilterMode(Qt.MatchContains)
         completador.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completador)
         if producto_id is not None:
-            combo.setCurrentIndex(max(0, combo.findData(producto_id)))
+            i = combo.findData(producto_id)
+            if i >= 0:
+                combo.setCurrentIndex(i)
         cantidad = QSpinBox()
         cantidad.setRange(1, 99999)
         costo = _decimal_spin(99999999, 2)
+        precio = _decimal_spin(99999999, 2, ' $')
+        precio.setToolTip('Precio de venta con el que el artículo queda en el inventario')
         subtotal = QTableWidgetItem('')
         subtotal.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         quitar = QToolButton()
@@ -334,33 +361,29 @@ class DialogoCompra(Dialogo):
         self.tabla.setCellWidget(r, 0, combo)
         self.tabla.setCellWidget(r, 1, cantidad)
         self.tabla.setCellWidget(r, 2, costo)
-        self.tabla.setItem(r, 3, subtotal)
-        self.tabla.setCellWidget(r, 4, quitar)
+        self.tabla.setCellWidget(r, 3, precio)
+        self.tabla.setItem(r, 4, subtotal)
+        self.tabla.setCellWidget(r, 5, quitar)
 
-        precio = _decimal_spin(99999999, 2, ' $')
-        usar = QCheckBox()
-        usar.setToolTip('Poner este precio de venta al artículo al registrar la compra')
-        linea = {'combo': combo, 'cantidad': cantidad, 'costo': costo, 'subtotal': subtotal, 'precio': precio,
-                 'usar': usar, 'precio_tocado': False}
+        aplicar = boton('Aplicar', tipo='plano')
+        aplicar.setToolTip('Poner el precio sugerido como precio de venta')
+        linea = {'combo': combo, 'cantidad': cantidad, 'costo': costo, 'precio': precio, 'subtotal': subtotal,
+                 'aplicar': aplicar, 'precio_tocado': False, 'estimacion': None, 'producto_anterior': None}
         self.lineas.append(linea)
         e = self.tabla_estimacion
         e.insertRow(r)
-        for col in (0, 1, 3, 4, 5, 6):
+        for col in range(6):
             item = QTableWidgetItem('')
             item.setTextAlignment((Qt.AlignLeft if col == 0 else Qt.AlignRight) | Qt.AlignVCenter)
             e.setItem(r, col, item)
-        e.setCellWidget(r, 2, precio)
-        celda_usar = QWidget()
-        capa_usar = QHBoxLayout(celda_usar)
-        capa_usar.setContentsMargins(0, 0, 0, 0)
-        capa_usar.addWidget(usar, 0, Qt.AlignCenter)
-        e.setCellWidget(r, 7, celda_usar)
+        e.setCellWidget(r, 6, aplicar)
 
-        combo.currentIndexChanged.connect(lambda *_, l=linea: self._cambio_producto(l))
+        combo.editTextChanged.connect(lambda *_, l=linea: self._cambio_producto(l))
         for w in (cantidad, costo):
             w.valueChanged.connect(self._recalcular)
         precio.valueChanged.connect(lambda *_, l=linea: self._precio_editado(l))
         quitar.clicked.connect(lambda _=False, l=linea: self._quitar_linea(l))
+        aplicar.clicked.connect(lambda _=False, l=linea: self._aplicar_sugerido(l))
         self._ajustar_moneda()
         self._cambio_producto(linea)
 
@@ -373,19 +396,43 @@ class DialogoCompra(Dialogo):
         self.tabla_estimacion.removeRow(r)
         self._recalcular()
 
+    def _nombre(self, linea):
+        return linea['combo'].currentText().replace('  (desactivado)', '').strip()
+
+    def _producto(self, linea):
+        return self.por_nombre.get(self._nombre(linea).lower())
+
     def _cambio_producto(self, linea):
-        p = self.por_id.get(linea['combo'].currentData())
-        if p and not linea['precio_tocado']:
-            linea['precio'].blockSignals(True)
-            linea['precio'].setValue(float(p['precio']))
-            linea['precio'].blockSignals(False)
+        p = self._producto(linea)
+        nuevo = bool(self._nombre(linea)) and p is None
+        combo = linea['combo']
+        combo.setStyleSheet('QComboBox { border-color: %s; background: %s; }' % (tema.CELESTE, tema.CELESTE_CLARO)
+                            if nuevo else '')
+        combo.setToolTip('Artículo nuevo: se creará en el inventario al registrar la compra' if nuevo else '')
+        pid = p['id'] if p else None
+        if pid != linea['producto_anterior']:
+            linea['producto_anterior'] = pid
+            if p and not linea['precio_tocado']:
+                self._poner_precio(linea, p['precio'])
         self._recalcular()
+
+    def _poner_precio(self, linea, valor):
+        linea['precio'].blockSignals(True)
+        linea['precio'].setValue(float(formato.decimal(valor)))
+        linea['precio'].blockSignals(False)
 
     def _precio_editado(self, linea):
         linea['precio_tocado'] = True
         self._recalcular()
 
-    # Cambios de forma de pago y plazo
+    def _aplicar_sugerido(self, linea):
+        res = linea.get('estimacion')
+        if res and res.get('precio_objetivo'):
+            linea['precio_tocado'] = True
+            self._poner_precio(linea, _redondear_precio(res['precio_objetivo']))
+            self._recalcular()
+
+    # Forma de pago y plazo
 
     def _forma(self):
         return self.forma.currentData()
@@ -412,13 +459,15 @@ class DialogoCompra(Dialogo):
         self.caja_contado.setVisible(self.contado.isChecked() and self._forma() in ('bs_usdt', 'bs_bcv'))
         self._recalcular()
 
+    def _fecha_vence(self):
+        d = self.fecha.date()
+        return sumar_meses(date(d.year(), d.month(), d.day()), self._plazo())
+
     def _pintar_vence(self, *args):
         if self.contado.isChecked():
             self.vence.setText('Se paga hoy')
-            return
-        d = self.fecha.date()
-        vence = sumar_meses(date(d.year(), d.month(), d.day()), self.meses.value())
-        self.vence.setText('· vence el {}'.format(vence.strftime('%d/%m/%Y')))
+        else:
+            self.vence.setText('· vence el {}'.format(self._fecha_vence().strftime('%d/%m/%Y')))
 
     # Cálculos
 
@@ -446,65 +495,112 @@ class DialogoCompra(Dialogo):
             self._pintar_estimacion()
 
     def _pintar_estimacion(self):
-        if not (self.prev.get('usdt') and self.prev.get('bcv')):
-            return
-        prev = self._previsiones()
-        objetivo = prev.margen_objetivo
-        forma, plazo = self._forma(), self._plazo()
         e = self.tabla_estimacion
+        hay_tasas = bool(self.prev.get('usdt') and self.prev.get('bcv'))
+        prev = self._previsiones() if hay_tasas else None
+        forma, plazo = self._forma(), self._plazo()
         for r, l in enumerate(self.lineas):
-            p = self.por_id.get(l['combo'].currentData())
             costo, precio = l['costo'].value(), l['precio'].value()
-            e.item(r, 0).setText(p['nombre'] if p else '—')
+            e.item(r, 0).setText(self._nombre(l) or '—')
+            e.item(r, 0).setToolTip('Precio de venta: {}'.format(formato.dinero(precio)))
             e.item(r, 1).setText(importe_factura(costo, forma))
-            if not p or costo <= 0 or precio <= 0:
-                for col in (3, 4, 5, 6):
+            if not prev or costo <= 0:
+                for col in (2, 3, 4, 5):
                     e.item(r, col).setText('—')
                 l['estimacion'] = None
+                l['aplicar'].setEnabled(False)
                 continue
             res = estimacion.estimar(costo, precio, forma, plazo, prev)
-            esc = estimacion.escenarios(costo, precio, forma, plazo, prev)
             l['estimacion'] = res
-            e.item(r, 3).setText(_pct(res['estimado']))
-            e.item(r, 4).setText(_pct(res['previsto']))
-            e.item(r, 4).setForeground(QColor(_color_margen(res['previsto'], objetivo)))
-            e.item(r, 5).setText(' / '.join(_pct(esc[k]).replace(' %', '') for k, _ in estimacion.ESCENARIOS) + ' %')
-            e.item(r, 5).setToolTip('\n'.join('{}: {}'.format(nombre, _pct(esc[k]))
-                                              for k, nombre in estimacion.ESCENARIOS))
-            e.item(r, 6).setText(formato.dinero(res['precio_objetivo']) if res['precio_objetivo'] else '—')
-            e.item(r, 6).setToolTip('Para mantener el {} estimado: {}'.format(
-                _pct(res['estimado']), formato.dinero(res['precio_mantener']) if res['precio_mantener'] else '—'))
-            e.item(r, 4).setToolTip('Pagarás a ~{} Bs/$ y venderás a una media de ~{} Bs/$'.format(
+            l['aplicar'].setEnabled(bool(res['precio_objetivo']))
+            sugerido = _redondear_precio(res['precio_objetivo']) if res['precio_objetivo'] else None
+            e.item(r, 5).setText(formato.dinero(sugerido) if sugerido else '—')
+            e.item(r, 5).setToolTip('Exacto: {} · para mantener el margen estimado: {}'.format(
+                formato.dinero(res['precio_objetivo']) if res['precio_objetivo'] else '—',
+                formato.dinero(res['precio_mantener']) if res['precio_mantener'] else '—'))
+            if precio <= 0:
+                for col in (2, 3, 4):
+                    e.item(r, col).setText('—')
+                continue
+            esc = estimacion.escenarios(costo, precio, forma, plazo, prev)
+            e.item(r, 2).setText(_pct(res['estimado']))
+            e.item(r, 3).setText(_pct(res['previsto']))
+            e.item(r, 3).setForeground(QColor(_color_margen(res['previsto'], prev.margen_objetivo)))
+            e.item(r, 3).setToolTip('Pagarás a ~{} Bs/$ y venderás a una media de ~{} Bs/$'.format(
                 formato.numero(res['tasa_pago']), formato.numero(res['tasa_venta'])))
+            e.item(r, 4).setText(' / '.join(formato.numero(esc[k], 1) for k, _ in estimacion.ESCENARIOS) + ' %')
+            e.item(r, 4).setToolTip('\n'.join('{}: {}'.format(nombre, _pct(esc[k]))
+                                              for k, nombre in estimacion.ESCENARIOS))
 
-    # Guardar
+    # Confirmar y guardar
 
     def validar(self):
         vistos = set()
         for l in self.lineas:
-            pid = l['combo'].currentData()
-            if pid is None or l['combo'].currentText() != (self.por_id.get(pid) or {}).get('nombre'):
-                return 'Elige el artículo de cada línea de la lista.'
-            if pid in vistos:
+            nombre = self._nombre(l)
+            if not nombre:
+                return 'Elige el artículo de cada línea o escribe el nombre de uno nuevo.'
+            if nombre.lower() in vistos:
                 return 'Hay artículos repetidos: junta las cantidades en una sola línea.'
-            vistos.add(pid)
+            vistos.add(nombre.lower())
             if l['costo'].value() <= 0:
-                return 'Indica el costo de cada artículo.'
+                return 'Indica el costo de «{}».'.format(nombre)
+            if l['precio'].value() <= 0:
+                return 'Indica el precio de venta de «{}».'.format(nombre)
         if self.caja_contado.isVisible() and self.tasa_contado.value() <= 0:
             return 'Indica la tasa a la que se paga hoy.'
         return ''
+
+    def _resumen(self):
+        forma = self._forma()
+        filas = []
+        for l in self.lineas:
+            p = self._producto(l)
+            precio = formato.decimal('{:.2f}'.format(l['precio'].value()))
+            anterior = formato.decimal(p['precio']) if p else None
+            res = l.get('estimacion') if self.grupo_estimacion.isChecked() else None
+            filas.append({
+                'nombre': self._nombre(l), 'nuevo': p is None, 'cantidad': l['cantidad'].value(),
+                'costo': formato.decimal(l['costo'].value()), 'precio': precio,
+                'precio_anterior': anterior if anterior is not None and anterior != precio else None,
+                'margen': (precio - formato.decimal(l['costo'].value())) / precio * 100
+                if forma != 'bs_fijos' else None,
+                'previsto': res['previsto'] if res else None,
+            })
+        pago = texto_plazo(self._plazo())
+        if self._plazo():
+            pago += ' · vence el {}'.format(self._fecha_vence().strftime('%d/%m/%Y'))
+        elif self.caja_contado.isVisible():
+            tasa = formato.decimal(self.tasa_contado.value())
+            pago += ' · se paga hoy a {} Bs/$ = {}'.format(formato.numero(tasa), formato.bolivares(self._total() * tasa))
+        return {'proveedor': self.proveedor.currentText().strip() or 'Sin proveedor',
+                'fecha': self.fecha.date().toString('dd/MM/yyyy'), 'forma': forma, 'pago': pago,
+                'filas': filas, 'total': self._total()}
+
+    def _aceptar(self):
+        mensaje = self.validar()
+        self.mostrar_error(mensaje)
+        if mensaje:
+            return
+        if DialogoConfirmarCompra(self, self._resumen()).exec_() != QDialog.Accepted:
+            return
+        super(DialogoCompra, self)._aceptar()
 
     def guardar(self):
         con_estimacion = self.grupo_estimacion.isChecked()
         lineas = []
         for l in self.lineas:
-            linea = {'producto': l['combo'].currentData(), 'cantidad': l['cantidad'].value(),
-                     'costo_unitario': '{:.2f}'.format(l['costo'].value())}
+            p = self._producto(l)
+            linea = {'cantidad': l['cantidad'].value(), 'costo_unitario': '{:.2f}'.format(l['costo'].value()),
+                     'precio_venta': '{:.2f}'.format(l['precio'].value())}
+            if p:
+                linea['producto'] = p['id']
+            else:
+                linea['nuevo_nombre'] = self._nombre(l)
             res = l.get('estimacion') if con_estimacion else None
-            if res:
-                linea['precio_previsto'] = '{:.2f}'.format(l['precio'].value())
-                linea['margen_previsto'] = '{:.2f}'.format(res['previsto']) if res['previsto'] is not None else None
-                linea['usar_precio'] = l['usar'].isChecked()
+            if res and res.get('previsto') is not None:
+                linea['precio_previsto'] = linea['precio_venta']
+                linea['margen_previsto'] = '{:.2f}'.format(res['previsto'])
             lineas.append(linea)
         d = self.fecha.date()
         datos = {
@@ -518,6 +614,83 @@ class DialogoCompra(Dialogo):
             datos['pago'] = {'tasa_pago': '{:.4f}'.format(self.tasa_contado.value())}
         api = self.api
         return lambda: api.crear_compra(datos)
+
+
+class DialogoConfirmarCompra(QDialog):
+    """Resumen de la compra para revisarla antes de registrarla."""
+
+    def __init__(self, parent, resumen):
+        super(DialogoConfirmarCompra, self).__init__(parent)
+        self.setWindowTitle('Revisa la compra')
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setMinimumWidth(1080)
+        forma = resumen['forma']
+        capa = QVBoxLayout(self)
+        capa.setContentsMargins(24, 20, 24, 18)
+        capa.setSpacing(10)
+        capa.addWidget(etiqueta('Revisa la compra antes de registrarla', 'seccion'))
+        datos = QGridLayout()
+        datos.setHorizontalSpacing(14)
+        for i, (titulo, valor) in enumerate((('Proveedor', resumen['proveedor']), ('Fecha', resumen['fecha']),
+                                              ('Se paga', NOMBRE_FORMA.get(forma, forma)), ('Pago', resumen['pago']))):
+            datos.addWidget(etiqueta(titulo.upper(), 'etiqueta'), i, 0)
+            datos.addWidget(etiqueta(valor), i, 1)
+        datos.setColumnStretch(1, 1)
+        capa.addLayout(datos)
+
+        t = QTableWidget(len(resumen['filas']), 7)
+        t.setHorizontalHeaderLabels(['Artículo', 'Cantidad', 'Costo u.', 'Subtotal', 'Precio de venta',
+                                     'Margen estimado', 'Con la brecha'])
+        t.verticalHeader().hide()
+        t.verticalHeader().setDefaultSectionSize(34)
+        t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        t.setSelectionMode(QAbstractItemView.NoSelection)
+        t.setFocusPolicy(Qt.NoFocus)
+        t.setShowGrid(False)
+        for r, f in enumerate(resumen['filas']):
+            precio = formato.dinero(f['precio'])
+            if f['precio_anterior'] is not None:
+                precio += '  (antes {})'.format(formato.dinero(f['precio_anterior']))
+            valores = [f['nombre'] + ('  · NUEVO' if f['nuevo'] else ''), str(f['cantidad']),
+                       importe_factura(f['costo'], forma), importe_factura(f['costo'] * f['cantidad'], forma), precio,
+                       _pct(f['margen']), _pct(f['previsto'])]
+            for c, valor in enumerate(valores):
+                item = QTableWidgetItem(valor)
+                item.setTextAlignment((Qt.AlignLeft if c in (0, 4) else Qt.AlignRight) | Qt.AlignVCenter)
+                if c == 0 and f['nuevo']:
+                    item.setForeground(QColor(tema.CELESTE_OSCURO))
+                if c == 4 and f['precio_anterior'] is not None:
+                    item.setForeground(QColor(tema.AMBAR))
+                t.setItem(r, c, item)
+        _ajustar_columnas(t, None)
+        t.setMinimumHeight(min(320, 46 + 34 * len(resumen['filas'])))
+        capa.addWidget(t)
+
+        unidades = sum(f['cantidad'] for f in resumen['filas'])
+        nuevos = sum(1 for f in resumen['filas'] if f['nuevo'])
+        cambios = sum(1 for f in resumen['filas'] if f['precio_anterior'] is not None)
+        fila = QHBoxLayout()
+        partes = ['Entrarán {} unidad{} al inventario'.format(unidades, '' if unidades == 1 else 'es')]
+        if nuevos:
+            partes.append('se crearán {} artículo{} nuevo{}'.format(nuevos, '' if nuevos == 1 else 's',
+                                                                   '' if nuevos == 1 else 's'))
+        if cambios:
+            partes.append('cambiará el precio de venta de {}'.format(cambios))
+        fila.addWidget(etiqueta(', '.join(partes) + '.', 'subtitulo', ajustar=True), 1)
+        fila.addWidget(etiqueta('TOTAL FACTURA', 'etiqueta'))
+        fila.addWidget(etiqueta(importe_factura(resumen['total'], forma), 'cifra'))
+        capa.addLayout(fila)
+
+        botones = QHBoxLayout()
+        botones.addStretch()
+        volver = boton('Volver a editar')
+        volver.clicked.connect(self.reject)
+        registrar = boton('Registrar compra', 'activar', tipo='primario')
+        registrar.setDefault(True)
+        registrar.clicked.connect(self.accept)
+        botones.addWidget(volver)
+        botones.addWidget(registrar)
+        capa.addLayout(botones)
 
 
 # --- Registrar pago ---------------------------------------------------------------------
@@ -609,8 +782,8 @@ def abrir_nueva_compra(pagina, producto_inicial=None, al_terminar=None):
             if al_terminar:
                 al_terminar(compra)
 
-    ejecutar(lambda: (api.productos(), api.previsiones_compra()), al_terminar=abrir, al_fallar=pagina.error,
-             widget=pagina)
+    ejecutar(lambda: (api.productos(incluir_inactivos=True), api.previsiones_compra()), al_terminar=abrir,
+             al_fallar=pagina.error, widget=pagina)
 
 
 # --- Pantalla Compras -------------------------------------------------------------------

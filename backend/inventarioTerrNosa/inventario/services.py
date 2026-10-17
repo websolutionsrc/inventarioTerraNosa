@@ -330,12 +330,13 @@ def sumar_meses(fecha, meses):
 
 
 @transaction.atomic
-def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, proveedor='', notas='',
-                     pago=None, precios=None):
+def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, proveedor='', notas='', pago=None):
     """
-    lineas: [{"producto", "cantidad", "costo_unitario", "precio_previsto"?, "margen_previsto"?}].
-    Suma el stock y crea un lote por artículo. Al contado se registra el pago en el acto (pago:
-    datos opcionales de registrar_pago_compra). precios: {producto_id: precio} para "Usar este precio".
+    lineas: [{"producto" (id) o "nuevo_nombre", "cantidad", "costo_unitario", "precio_venta"?,
+              "precio_previsto"?, "margen_previsto"?}].
+    Los artículos nuevos se crean en el inventario. Suma el stock, crea un lote por artículo y pone
+    el precio de venta indicado. Al contado se registra el pago en el acto (pago: datos opcionales
+    de registrar_pago_compra).
     """
     if not lineas:
         raise ErrorNegocio("La compra no tiene artículos.")
@@ -344,16 +345,27 @@ def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, pro
     if plazo_meses < 0:
         raise ErrorNegocio("El plazo no puede ser negativo.")
 
-    ids = [int(l['producto']) for l in lineas]
-    if len(set(ids)) != len(ids):
+    ids = [int(l['producto']) for l in lineas if l.get('producto')]
+    nuevos = [(l.get('nuevo_nombre') or '').strip() for l in lineas if not l.get('producto')]
+    if len(set(ids)) != len(ids) or len({n.lower() for n in nuevos}) != len(nuevos):
         raise ErrorNegocio("Hay artículos repetidos en la compra: junta las cantidades en una sola línea.")
+    for nombre in nuevos:
+        if not nombre:
+            raise ErrorNegocio("Falta el nombre de un artículo nuevo.")
+        if Producto.objects.filter(nombre__iexact=nombre).exists():
+            raise ErrorNegocio("Ya existe un artículo llamado «{}»: elígelo de la lista.".format(nombre))
     productos = {p.id: p for p in Producto.objects.select_for_update().filter(id__in=ids).order_by('id')}
     total = Decimal('0.00')
     for l in lineas:
-        if int(l['producto']) not in productos:
+        if l.get('producto') and int(l['producto']) not in productos:
             raise ErrorNegocio("Producto no encontrado: {}.".format(l['producto']))
         if int(l['cantidad']) <= 0 or Decimal(l['costo_unitario']) <= 0:
             raise ErrorNegocio("Cantidades y costos deben ser mayores que cero.")
+        precio = l.get('precio_venta')
+        if precio is not None and Decimal(precio) <= 0:
+            raise ErrorNegocio("El precio de venta debe ser mayor que cero.")
+        if not l.get('producto') and precio is None:
+            raise ErrorNegocio("Pon el precio de venta de «{}».".format(l.get('nuevo_nombre')))
         total += Decimal(l['costo_unitario']) * int(l['cantidad'])
 
     compra = Compra.objects.create(
@@ -363,7 +375,11 @@ def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, pro
     motivo = 'Compra #{}'.format(compra.id) + (' · {}'.format(compra.proveedor) if compra.proveedor else '')
 
     for l in lineas:
-        producto = productos[int(l['producto'])]
+        if l.get('producto'):
+            producto = productos[int(l['producto'])]
+        else:
+            producto = Producto.objects.create(nombre=l['nuevo_nombre'].strip()[:255], proveedor=compra.proveedor,
+                                               precio=Decimal(l['precio_venta']), stock=0)
         cantidad = int(l['cantidad'])
         LoteCompra.objects.create(compra=compra, producto=producto, cantidad=cantidad, disponible=cantidad,
                                   costo_unitario=Decimal(l['costo_unitario']),
@@ -371,12 +387,12 @@ def registrar_compra(usuario, lineas, forma_pago, plazo_meses=0, fecha=None, pro
                                   margen_previsto=l.get('margen_previsto'))
         producto.stock += cantidad
         campos = ['stock', 'actualizado']
-        nuevo_precio = (precios or {}).get(producto.id)
-        if nuevo_precio is not None:
-            if Decimal(nuevo_precio) <= 0:
-                raise ErrorNegocio("El precio de venta debe ser mayor que cero.")
-            producto.precio = Decimal(nuevo_precio)
+        if l.get('precio_venta') is not None and Decimal(l['precio_venta']) != producto.precio:
+            producto.precio = Decimal(l['precio_venta'])
             campos.append('precio')
+        if not producto.activo:  # comprar un artículo desactivado lo vuelve a poner a la venta
+            producto.activo = True
+            campos.append('activo')
         producto.save(update_fields=campos)
         EntradaInventario.objects.create(producto=producto, usuario_admin=usuario,
                                          tipo=EntradaInventario.Tipo.ENTRADA, cantidad=cantidad,
